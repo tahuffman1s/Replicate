@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Cut a release: tag to create for this commit (e.g. v0.1.0). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -28,11 +33,15 @@ jobs:
           path: |
             packaging/appimage/*.AppImage
             packaging/appimage/*.zsync
-      - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+      # On a tag push the release is for that tag. On a manual run with a tag
+      # name, the action creates the tag at this commit and the release with it.
+      - name: Create or update the release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          name: Replicate ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: Replicate ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: |
             packaging/appimage/*.AppImage
