@@ -95,7 +95,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.content_header.set_title_widget(self.title_widget)
         self.content_view.add_top_bar(self.content_header)
         self.stack = Gtk.Stack()
-        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
         self.content_view.set_content(self.stack)
         self.split.set_content(Adw.NavigationPage(title="Content", child=self.content_view))
 

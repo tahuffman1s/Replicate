@@ -51,13 +51,23 @@ class ServerDialog(Adw.Dialog):
 
         auth = Adw.PreferencesGroup(title="Authentication")
         self.auth = Adw.ComboRow(title="Method")
-        self.auth.set_model(Gtk.StringList.new(["SQL Server login", "Windows (NTLM)"]))
-        self.auth.set_selected(1 if s.auth == "windows" else 0)
+        self.auth.set_model(Gtk.StringList.new(["SQL Server login", "Windows (password)", "Windows (Kerberos)"]))
+        self.auth.set_selected({"windows": 1, "kerberos": 2}.get(s.auth, 0))
+        self.auth.connect("notify::selected", lambda *_: self._sync_auth_rows())
         auth.add(self.auth)
-        self.user = Adw.EntryRow(title="Login (DOMAIN\\user for Windows)", text=s.username)
+        self.domain = Adw.EntryRow(title="Domain (DNS name, e.g. corp.example.com)", text=s.domain)
+        auth.add(self.domain)
+        self.user = Adw.EntryRow(title="User name", text=s.username)
         auth.add(self.user)
         self.password = Adw.PasswordEntryRow(title="Password" + (" (blank keeps the saved one)" if self.editing else ""))
         auth.add(self.password)
+        self.ticket_row = Adw.ActionRow(use_markup=False, title="Kerberos ticket", subtitle="Checking…")
+        self.ticket_button = Gtk.Button(label="Get Ticket…", valign=Gtk.Align.CENTER)
+        self.ticket_button.connect("clicked", self._on_get_ticket)
+        self.ticket_row.add_suffix(self.ticket_button)
+        auth.add(self.ticket_row)
+        self.spn = Adw.EntryRow(title="Service principal (blank: MSSQLSvc/host:port)", text=s.spn)
+        auth.add(self.spn)
         self.database = Adw.EntryRow(title="Default database", text=s.database)
         auth.add(self.database)
         page.add(auth)
@@ -79,6 +89,67 @@ class ServerDialog(Adw.Dialog):
         page.add(test_group)
 
         self._sync_vm_rows()
+        self._sync_auth_rows()
+
+    def _auth_mode(self) -> str:
+        return ("sql", "windows", "kerberos")[self.auth.get_selected()]
+
+    def _sync_auth_rows(self) -> None:
+        mode = self._auth_mode()
+        self.domain.set_visible(mode != "sql")
+        self.password.set_visible(mode != "kerberos")
+        self.ticket_row.set_visible(mode == "kerberos")
+        self.spn.set_visible(mode == "kerberos")
+        self.user.set_title("Login" if mode == "sql" else "User name (without the domain)")
+        if mode == "kerberos":
+            self._refresh_ticket()
+
+    def _refresh_ticket(self) -> None:
+        from replicate.sql import kerberos
+
+        if not kerberos.available():
+            self.ticket_row.set_subtitle("python-gssapi is not installed; Kerberos is unavailable on this computer")
+            self.ticket_button.set_sensitive(False)
+            return
+
+        def done(ticket) -> None:
+            if ticket is None:
+                self.ticket_row.set_subtitle("No ticket on this computer")
+            else:
+                self.ticket_row.set_subtitle(ticket.describe())
+
+        run_in_thread(kerberos.current_ticket, on_done=done, on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="klist")
+
+    def _on_get_ticket(self, *_args) -> None:
+        from replicate.sql import kerberos
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        principal = Gtk.Entry(placeholder_text="user@REALM")
+        principal.set_text(kerberos.principal_for(self.user.get_text(), self.domain.get_text()))
+        password = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Password")
+        box.append(principal)
+        box.append(password)
+        dialog = Adw.AlertDialog(heading="Get a Kerberos ticket", body="Logs this computer in to the domain; the ticket is kept in your credential cache, not by Replicate.")
+        dialog.set_extra_child(box)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", "Get Ticket")
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        password.connect("activate", lambda *_: dialog.response("ok"))
+
+        def on_response(_d, response: str) -> None:
+            if response != "ok":
+                return
+            self.ticket_row.set_subtitle("Logging in…")
+            run_in_thread(
+                kerberos.obtain_ticket, principal.get_text(), password.get_text(),
+                on_done=lambda t: self.ticket_row.set_subtitle(t.describe()),
+                on_error=lambda e: (self.ticket_row.set_subtitle(str(e)), error_dialog(self, "No ticket", str(e))),
+                name="kinit",
+            )
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     def _sync_vm_rows(self) -> None:
         in_vm = self.in_vm.get_active()
@@ -96,8 +167,10 @@ class ServerDialog(Adw.Dialog):
         s.instance = self.instance.get_text().strip()
         s.port = int(self.port.get_value())
         s.service_name = self.service.get_text().strip() if s.vm_managed else ""
-        s.auth = "windows" if self.auth.get_selected() == 1 else "sql"
+        s.auth = self._auth_mode()
+        s.domain = self.domain.get_text().strip() if s.auth != "sql" else ""
         s.username = self.user.get_text().strip()
+        s.spn = self.spn.get_text().strip() if s.auth == "kerberos" else ""
         s.database = self.database.get_text().strip() or "master"
         s.notes = self.notes.get_text()
         password = self.password.get_text() or None
@@ -106,8 +179,10 @@ class ServerDialog(Adw.Dialog):
     def _validate(self, s: SqlServer) -> str | None:
         if not s.vm_managed and not s.host:
             return "Enter the server's host name or address."
-        if not s.username:
+        if not s.username and s.auth != "kerberos":
             return "Enter the login to connect with."
+        if s.auth == "windows" and "\\" in s.username:
+            return "Put the domain in the Domain field and only the user name in User name."
         if not s.port and not s.instance:
             return "Enter a TCP port, or an instance name so SQL Browser can find the port."
         return None
@@ -163,7 +238,7 @@ class LinksDialog(Adw.Dialog):
         self.group.set_description(
             "Turning a server on creates a linked server (sp_addlinkedserver) on "
             f"{source.name}, so queries there can reach it as [LinkedName].db.schema.table. "
-            "SQL logins are mapped with the target's saved credentials; Windows logins pass through."
+            "SQL logins are mapped with the target's saved credentials; Windows and Kerberos logins pass through as the caller."
         )
         page.add(self.group)
         self.rows: dict[str, Adw.SwitchRow] = {}

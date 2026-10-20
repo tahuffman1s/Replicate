@@ -81,14 +81,31 @@ class SqlServer:
     host: str = "vm"  # "vm" means "the Replicate VM, whatever its address is"
     port: int = 1433
     instance: str = ""  # named instance, resolved through SQL Browser when port is 0
-    auth: str = "sql"  # "sql" or "windows" (NTLM, user as DOMAIN\\user)
+    auth: str = "sql"  # "sql", "windows" (NTLM with a password) or "kerberos" (the host's ticket)
+    domain: str = ""  # Windows domain, NetBIOS or DNS name; blank for a local account or SQL login
     username: str = "replicate"
+    spn: str = ""  # Kerberos service principal override; blank means MSSQLSvc/host:port
     database: str = "master"
     vm_managed: bool = True
     service_name: str = "MSSQLSERVER"  # Windows service, e.g. MSSQL$ACCT
     linked_to: list[str] = field(default_factory=list)  # ids of linked servers
     notes: str = ""
     enabled: bool = True
+
+    @property
+    def account(self) -> str:
+        """How the login reads: user, DOMAIN\\user or user@REALM."""
+        if self.auth == "kerberos":
+            from replicate.sql.kerberos import principal_for
+
+            return principal_for(self.username, self.domain)
+        if self.auth == "windows" and self.domain and "\\" not in self.username:
+            return f"{self.domain}\\{self.username}"
+        return self.username
+
+    @property
+    def auth_label(self) -> str:
+        return {"sql": "SQL login", "windows": "Windows", "kerberos": "Kerberos"}.get(self.auth, self.auth)
 
     @property
     def display_instance(self) -> str:

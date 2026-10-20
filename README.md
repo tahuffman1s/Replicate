@@ -35,8 +35,9 @@ Replicate is a GTK 4 / libadwaita desktop app. It is free software
   attaches the data files in place or restores the backups, with the names you
   choose. Many clones of one image cost nothing until they are written to.
 - **Keeps a server list that is yours.** Instances inside the VM register
-  themselves. Add any other SQL Server you can reach, with SQL or Windows
-  authentication, and link servers to each other: a switch per pair creates a
+  themselves. Add any other SQL Server you can reach, with a SQL login, a
+  Windows account and password, or the Kerberos ticket your Linux desktop
+  already has, and link servers to each other: a switch per pair creates a
   linked server (`sp_addlinkedserver`) with the right login mapping, and tests
   it.
 - **Shows activity like a profiler, as charts.** Live CPU (SQL Server vs. the
@@ -121,6 +122,31 @@ python3 -m replicate
 Configuration lives in `~/.config/replicate/config.json`, state (which clones
 are attached where) in `~/.local/share/replicate/state.json`, passwords in
 your keyring (libsecret) or, without one, in a 0600 file next to the config.
+
+### Windows authentication from Linux
+
+Three ways to sign in to a server, chosen per server in *Add server*:
+
+- **SQL Server login**: user name and password, kept in your keyring.
+- **Windows account (password)**: domain, user name and password; Replicate
+  authenticates with NTLM. Works against domain accounts and against local
+  Windows accounts (use the machine name, or leave the domain blank).
+- **Windows account (Kerberos ticket)**: no password stored anywhere.
+  Replicate uses the ticket in this computer's credential cache, the same one
+  `klist` shows, through GSSAPI. If there is no ticket, *Get Ticket…* in the
+  dialog logs you in to the domain (or run `kinit user@REALM`); desktops
+  joined with sssd or realmd have one from login already.
+
+Kerberos needs, on the Linux side, the `python3-gssapi` bindings (bundled in
+the AppImage and the Nix package) and a working `/etc/krb5.conf` for the
+realm, which `realm join` or `sssd` write for you; otherwise DNS discovery
+of the domain controllers is enough for most Active Directory domains. On
+the SQL Server side the instance has to be reachable by a name that matches
+its service principal (`MSSQLSvc/host.fqdn:port`), which SQL Server
+registers itself when its service account is allowed to; the dialog has a
+field to override the SPN when it is not. The Replicate VM's own instances
+accept Kerberos once you join that VM to a domain; until then use the SQL
+login the setup created, or a Windows account with the VM's name as domain.
 
 ### How clones work
 

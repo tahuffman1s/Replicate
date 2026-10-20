@@ -43,6 +43,30 @@ def resolve_instance_port(host: str, instance: str, timeout: float = 5) -> int:
     raise SqlError(f"SQL Browser on {host} knows no TCP port for instance {instance} (is TCP enabled?)")
 
 
+def build_windows_auth(server: SqlServer, password: str, host: str, port: int):
+    """NTLM with a password, or Kerberos with the host's ticket."""
+    user = server.username.strip()
+    domain = server.domain.strip()
+    if "\\" in user and not domain:  # older entries kept DOMAIN\\user in one field
+        domain, _, user = user.rpartition("\\")
+    if server.auth == "kerberos":
+        from replicate.sql import kerberos
+
+        spn = server.spn.strip() or kerberos.service_principal(host, port, server.instance)
+        principal = kerberos.principal_for(user, domain) if user else None
+        try:
+            return kerberos.GssapiAuth(spn, principal)
+        except kerberos.KerberosError as exc:
+            raise SqlError(str(exc)) from exc
+    try:
+        from pytds import login as tds_login
+    except ImportError as exc:  # pragma: no cover
+        raise SqlError(f"Windows authentication is not available: {exc}") from exc
+    if not password:
+        raise SqlError(f"{server.name}: Windows authentication needs the account's password (or use Kerberos).")
+    return tds_login.NtlmAuth(user_name=f"{domain}\\{user}" if domain else user, password=password)
+
+
 class SqlConnection:
     def __init__(self, server: SqlServer, password: str, host: str, *, timeout: float = 15, database: str | None = None,
                  query_timeout: int = 0):
@@ -64,16 +88,10 @@ class SqlConnection:
             "autocommit": True,
             "as_dict": True,
         }
-        if server.auth == "windows":
-            try:
-                from pytds import login as tds_login
-
-                domain, _, account = user.rpartition("\\")
-                kwargs["auth"] = tds_login.NtlmAuth(user_name=f"{domain}\\{account}" if domain else account, password=password)
-                kwargs["user"] = None
-                kwargs["password"] = None
-            except Exception as exc:  # noqa: BLE001
-                raise SqlError(f"Windows authentication is not available: {exc}") from exc
+        if server.auth in ("windows", "kerberos"):
+            kwargs["user"] = None
+            kwargs["password"] = None
+            kwargs["auth"] = build_windows_auth(server, password, host, port)
         try:
             self._conn = pytds.connect(**kwargs)
         except Exception as exc:  # noqa: BLE001

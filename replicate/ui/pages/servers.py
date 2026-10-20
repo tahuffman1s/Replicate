@@ -71,7 +71,7 @@ class ServersPage(Gtk.ScrolledWindow):
         if server.linked_to:
             names = [s.name for s in (self.ctx.registry.get(i) for i in server.linked_to) if s]
             links = " · linked to " + ", ".join(names)
-        row = Adw.ActionRow(use_markup=False, title=server.name, subtitle=f"{where}{instance}{port} · {server.username} ({'SQL' if server.auth == 'sql' else 'Windows'}){links}")
+        row = Adw.ActionRow(use_markup=False, title=server.name, subtitle=f"{where}{instance}{port} · {server.account or 'this computer\'s ticket'} ({server.auth_label}){links}")
         row.set_activatable(True)
         row.connect("activated", lambda *_: self._on_edit(server))
         row.add_prefix(Gtk.Image.new_from_icon_name("network-server-symbolic" if not server.vm_managed else "computer-symbolic"))

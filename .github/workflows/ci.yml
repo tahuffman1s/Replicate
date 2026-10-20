@@ -15,7 +15,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-gi python3-gi-cairo python3-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libadwaita-1-0 qemu-utils xvfb appstream desktop-file-utils
+            libadwaita-1-0 qemu-utils xvfb appstream desktop-file-utils python3-gssapi
       - name: Python packages
         run: python3 -m pip install --break-system-packages python-tds pytest
       - name: Unit tests

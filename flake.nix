@@ -22,6 +22,7 @@
             pygobject3
             pycairo
             python-tds
+            gssapi
           ];
           nativeBuildInputs = with pkgs; [
             wrapGAppsHook4
@@ -35,7 +36,7 @@
 
           # Tools the app calls at run time.
           makeWrapperArgs = [
-            "--prefix PATH : ${pkgs.lib.makeBinPath (with pkgs; [ libvirt qemu-utils xorriso virt-viewer ])}"
+            "--prefix PATH : ${pkgs.lib.makeBinPath (with pkgs; [ libvirt qemu-utils xorriso virt-viewer krb5 ])}"
           ];
 
           postInstall = ''
@@ -61,7 +62,7 @@
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            (python3.withPackages (ps: with ps; [ pygobject3 pycairo python-tds pytest ]))
+            (python3.withPackages (ps: with ps; [ pygobject3 pycairo python-tds gssapi pytest ]))
             gtk4
             libadwaita
             libsecret
@@ -70,6 +71,7 @@
             qemu-utils
             xorriso
             virt-viewer
+            krb5
             appstream
             desktop-file-utils
           ];
