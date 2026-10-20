@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.4" date="2026-10-20">
+      <description>
+        <p>The AppImage no longer needs libfuse2: it mounts with FUSE 3 or FUSE 2 and extracts itself where there is no FUSE, so it runs on Rocky Linux, Fedora and current Ubuntu as downloaded.</p>
+      </description>
+    </release>
     <release version="0.1.3" date="2026-10-20">
       <description>
         <p>The AppImage can decode SVG again, so its bundled icons render under every desktop theme.</p>
