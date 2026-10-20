@@ -73,6 +73,20 @@ AppDir:
     - test -e AppDir/runtime/compat/lib64 || ln -s usr/lib64 AppDir/runtime/compat/lib64
     - test -e AppDir/runtime/compat/lib || ln -s usr/lib AppDir/runtime/compat/lib
     - ls -la AppDir/runtime/compat/
+    # appimage-builder writes gdk-pixbuf's loaders.cache without librsvg's
+    # loader (it cannot load the module while querying), so no SVG, and no
+    # icon, could be decoded from the bundle. Query again with the bundled
+    # libraries on the path, keeping bare module names (GDK_PIXBUF_MODULEDIR finds them).
+    # (The bundled copy of the tool is already patched for AppRun by now, so the
+    # build host's gdk-pixbuf-query-loaders, from libgdk-pixbuf2.0-bin, runs here.)
+    - >
+      LD_LIBRARY_PATH="$PWD"/AppDir/usr/lib/x86_64-linux-gnu
+      "$(command -v gdk-pixbuf-query-loaders || echo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders)"
+      "$PWD"/AppDir/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders/*.so
+      | sed -E 's#^"/.*/(libpixbufloader-[^"/]+\.so)"$#"\1"#'
+      > AppDir/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
+    - grep -q '"svg"' AppDir/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
+    - grep -c '^"libpixbufloader-' AppDir/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
 
   files:
     exclude:

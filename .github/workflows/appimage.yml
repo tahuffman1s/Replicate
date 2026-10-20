@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-pip python3-setuptools \
-            binutils coreutils desktop-file-utils fakeroot fuse libgdk-pixbuf2.0-dev patchelf \
+            binutils coreutils desktop-file-utils fakeroot fuse libgdk-pixbuf2.0-dev libgdk-pixbuf2.0-bin patchelf \
             python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 squashfs-tools strace util-linux zsync
           python3 -m pip install --break-system-packages "appimage-builder==1.1.0" "packaging<22"
       - name: Build the AppImage
