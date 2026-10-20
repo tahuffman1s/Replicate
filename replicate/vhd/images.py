@@ -1,7 +1,7 @@
 """Find and inspect disk images with ``qemu-img``.
 
 QEMU reads VHD (``vpc``) and VHDX natively, so an image made on Windows
-(Hyper-V, Disk Management, a SQL Clone image, ``New-VHD``) needs no
+(Hyper-V, Disk Management, ``New-VHD``) needs no
 conversion: it is attached to the VM as is, or through a copy-on-write clone.
 """
 

@@ -9,7 +9,7 @@
     <p>
       Replicate creates a Windows VM with SQL Server on your Linux machine, in the
       background, through libvirt and KVM. Point it at VHD or VHDX images (from
-      SQL Clone, Hyper-V, or anything else that makes them) and it attaches
+      Hyper-V, Disk Management, or anything else that makes them) and it attaches
       copy-on-write clones of them to the VM and turns the data files or
       backups on them into databases.
     </p>

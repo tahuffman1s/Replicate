@@ -146,7 +146,7 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.images_group.remove(row)
         self.image_rows.clear()
         if not self.images:
-            row = Adw.ActionRow(use_markup=False, title="No images found", subtitle="Add a folder above. SQL Clone images, Hyper-V disks and New-VHD files all work.")
+            row = Adw.ActionRow(use_markup=False, title="No images found", subtitle="Add a folder above. Hyper-V disks, New-VHD files and qcow2 images all work.")
             self.images_group.add(row)
             self.image_rows.append(row)
             return

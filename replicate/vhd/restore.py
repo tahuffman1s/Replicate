@@ -3,7 +3,7 @@
 Two ways in, both plain T-SQL run from the host:
 
 * **Attach** (``CREATE DATABASE ... FOR ATTACH``): the disk holds the data and
-  log files themselves (a SQL Clone image, a copied data directory, a disk
+  log files themselves (a copied data directory, a disk
   from another server). Nothing is copied; the database lives on the clone.
 * **Restore** (``RESTORE DATABASE ... FROM DISK``): the disk holds ``.bak``
   files. The data files are written to the instance's default directories,

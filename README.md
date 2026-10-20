@@ -28,8 +28,8 @@ Replicate is a GTK 4 / libadwaita desktop app. It is free software
   VM stays up. Service control goes through the QEMU guest agent, so it works
   with no network and no Windows password.
 - **Takes VHD and VHDX images and makes databases out of them.** Point it at a
-  folder of images: SQL Clone images, Hyper-V disks, `New-VHD` files, qcow2 or
-  raw images. Attaching makes a copy-on-write clone (a qcow2 overlay; the image
+  folder of images: Hyper-V disks, `New-VHD` files, qcow2 or raw images,
+  anything that holds data files or backups. Attaching makes a copy-on-write clone (a qcow2 overlay; the image
   is never written to) and hot-plugs it into the VM. Windows brings the disk
   online, Replicate lists the `.mdf`/`.ldf`/`.ndf` and `.bak` files on it, and
   attaches the data files in place or restores the backups, with the names you
@@ -132,9 +132,9 @@ letters and lists database files. Databases are then attached with `CREATE
 DATABASE … FOR ATTACH` or restored with `RESTORE DATABASE … WITH MOVE`, over a
 normal TDS connection from the host.
 
-Differencing VHDX disks (a SQL Clone *clone*, as opposed to an *image*) cannot
-be opened by QEMU; merge them in Windows first (`Merge-VHD`) or use the parent
-image, which is what you usually want anyway.
+Differencing VHDX disks (children of a parent VHDX) cannot be opened by QEMU;
+merge them in Windows first (`Merge-VHD`) or use the parent image, which is
+what you usually want anyway.
 
 ### The VM's own setup script
 
