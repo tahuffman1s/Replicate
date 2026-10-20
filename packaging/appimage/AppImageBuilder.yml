@@ -44,7 +44,6 @@ AppDir:
       - gir1.2-pango-1.0
       - libadwaita-1-0
       - libgtk-4-1
-      - libgtk-4-media-gstreamer
       - libsecret-1-0
       - adwaita-icon-theme
       - shared-mime-info
@@ -52,19 +51,29 @@ AppDir:
       - libvirt-clients
       - xorriso
       - ca-certificates
-    exclude:
-      - "*-doc"
-      - "*-dbg"
-      - humanity-icon-theme
-      - ubuntu-mono
+    # No broad exclude globs here on purpose: appimage-builder 1.1.0 marks
+    # excluded packages as "installed" at one version and apt then upgrades
+    # every match into the AppDir (hundreds of MB of -doc and -dbg packages).
+    # Recommends are off, so nothing pulls docs or debug builds in by itself.
+    exclude: []
+
+  # appimage-builder 1.1.0 writes APPDIR_LIBC_LINKER_PATH as a Python set
+  # ("{'lib64/ld-linux-x86-64.so.2'}"), which AppRun cannot use, so the
+  # AppImage fails with "No such file or directory". Normalise it.
+  after_runtime:
+    - sed -i -E "s/^APPDIR_LIBC_LINKER_PATH=\{'([^']*)'(, '([^']*)')*\}$/APPDIR_LIBC_LINKER_PATH=\1/" AppDir/AppRun.env
+    - grep APPDIR_LIBC_LINKER_PATH AppDir/AppRun.env
 
   files:
     exclude:
       - usr/share/man
-      - usr/share/doc/*/README.*
-      - usr/share/doc/*/changelog.*
-      - usr/share/doc/*/NEWS.*
-      - usr/share/doc/*/TODO.*
+      - usr/share/doc
+      - usr/share/gtk-doc
+      - usr/share/info
+      - usr/share/locale
+      - usr/lib/debug
+      - usr/lib/x86_64-linux-gnu/debug
+      - usr/include
       - usr/lib/x86_64-linux-gnu/gconv
 
   runtime:
