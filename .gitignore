@@ -15,3 +15,7 @@ packaging/appimage/*.zsync
 *.vhd
 *.vhdx
 tools/screenshots/
+packaging/appimage/runtime-*
+packaging/appimage/appimagetool.AppImage
+packaging/appimage/appimage-builder.AppImage
+packaging/appimage/*.part

@@ -69,6 +69,27 @@ executable, run it. The AppImage bundles GTK, libadwaita, Python, python-tds,
   On Ubuntu: `sudo apt install libvirt-daemon-system qemu-system-x86 swtpm ovmf`.
 - **virt-viewer** (optional) to see the VM's screen from the Overview page.
 
+The AppImage mounts itself with FUSE when the system has it (FUSE 3 or
+FUSE 2 both work) and extracts itself to a temporary directory when it does
+not, so it runs either way; `--appimage-extract-and-run` forces the latter.
+
+#### Fedora, Rocky Linux and other RHEL-family systems
+
+```sh
+sudo dnf install qemu-kvm libvirt virt-install swtpm swtpm-tools edk2-ovmf virt-viewer
+sudo systemctl enable --now libvirtd
+sudo usermod -aG libvirt,kvm $USER      # sign in again afterwards
+```
+
+`swtpm` is easy to forget; Windows 11 will not install without the TPM.
+SELinux can stay enforcing: libvirt labels the VM disk and clone files
+itself. Images on a network share need `setsebool -P virt_use_samba on` (CIFS)
+or `virt_use_nfs on` (NFS). Home directories are created 0700 on these
+systems, so either `chmod o+x ~` or point *Settings → Clones directory* at a
+folder outside your home, so the qemu user can reach the clone files.
+Machines joined with `realm join` already hold a Kerberos ticket in the KCM
+cache at login; Replicate's Kerberos sign-in uses it as is.
+
 ### Nix / NixOS
 
 ```sh
