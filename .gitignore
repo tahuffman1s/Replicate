@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+result
+result-*
+.direnv/
+.pytest_cache/
+packaging/appimage/AppDir/
+packaging/appimage/appimage-build/
+packaging/appimage/*.AppImage
+packaging/appimage/*.zsync
+*.qcow2
+*.vhd
+*.vhdx
+tools/screenshots/

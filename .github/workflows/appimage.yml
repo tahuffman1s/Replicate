@@ -1,0 +1,37 @@
+name: AppImage
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-pip python3-setuptools \
+            binutils coreutils desktop-file-utils fakeroot fuse libgdk-pixbuf2.0-dev patchelf \
+            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 squashfs-tools strace util-linux zsync
+          python3 -m pip install --break-system-packages "appimage-builder==1.1.0" "packaging<22"
+      - name: Build the AppImage
+        run: packaging/appimage/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Replicate-AppImage
+          path: |
+            packaging/appimage/*.AppImage
+            packaging/appimage/*.zsync
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packaging/appimage/*.AppImage
+            packaging/appimage/*.zsync

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.tahuffman1s.Replicate</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Replicate</name>
+  <summary>Restore SQL Server databases from VHD images</summary>
+  <description>
+    <p>
+      Replicate creates a Windows VM with SQL Server on your Linux machine, in the
+      background, through libvirt and KVM. Point it at VHD or VHDX images (from
+      SQL Clone, Hyper-V, or anything else that makes them) and it attaches
+      copy-on-write clones of them to the VM and turns the data files or
+      backups on them into databases.
+    </p>
+    <p>
+      Start and stop the VM, or just the SQL Server services inside it; add any
+      other SQL Server you can reach; link servers to each other; and watch what
+      they are doing with live charts and a statement trace built on Extended
+      Events.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.tahuffman1s.Replicate.desktop</launchable>
+  <url type="homepage">https://github.com/tahuffman1s/Replicate</url>
+  <url type="bugtracker">https://github.com/tahuffman1s/Replicate/issues</url>
+  <developer id="io.github.tahuffman1s">
+    <name>Travis Huffman</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <display_length compare="ge">760</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <releases>
+    <release version="0.1.0" date="2026-10-20">
+      <description><p>First release.</p></description>
+    </release>
+  </releases>
+</component>

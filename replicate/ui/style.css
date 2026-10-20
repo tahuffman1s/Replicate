@@ -1,0 +1,80 @@
+/* Replicate */
+
+.sidebar-list row {
+  padding: 6px 8px;
+}
+
+.page-content {
+  padding: 18px 24px 24px 24px;
+}
+
+.stat-tile {
+  padding: 12px 14px;
+  min-width: 140px;
+}
+
+.chart {
+  padding: 6px;
+}
+
+.chart-card {
+  padding: 8px 12px 6px 12px;
+}
+
+.status-pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: 600;
+  background: alpha(currentColor, 0.12);
+}
+
+.status-good {
+  color: @success_color;
+}
+
+.status-warn {
+  color: @warning_color;
+}
+
+.status-bad {
+  color: @error_color;
+}
+
+.status-neutral {
+  opacity: 0.75;
+}
+
+.data-table {
+  font-size: 0.9em;
+}
+
+.data-table > listview > row {
+  padding: 2px 0;
+}
+
+.mono {
+  font-family: monospace;
+}
+
+.vm-hero {
+  padding: 18px 20px;
+}
+
+.vm-hero .title-1 {
+  font-size: 1.9em;
+}
+
+.section-title {
+  margin-top: 6px;
+}
+
+.install-log {
+  font-family: monospace;
+  font-size: 0.85em;
+  padding: 8px;
+}
+
+.compact-row {
+  min-height: 36px;
+}

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3987e5"/>
+      <stop offset="1" stop-color="#1c5cab"/>
+    </linearGradient>
+    <linearGradient id="disk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dfe8f5"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#bg)"/>
+  <!-- source database cylinder -->
+  <g transform="translate(26 34)">
+    <ellipse cx="18" cy="8" rx="18" ry="8" fill="url(#disk)"/>
+    <path d="M0 8v40c0 4.4 8.1 8 18 8s18-3.6 18-8V8c0 4.4-8.1 8-18 8S0 12.4 0 8z" fill="#c9d8ef"/>
+    <path d="M0 22c0 4.4 8.1 8 18 8s18-3.6 18-8" fill="none" stroke="#9fb6da" stroke-width="2"/>
+    <path d="M0 36c0 4.4 8.1 8 18 8s18-3.6 18-8" fill="none" stroke="#9fb6da" stroke-width="2"/>
+  </g>
+  <!-- arrow -->
+  <path d="M66 62h18l-6-6m6 6-6 6" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- clone cylinder -->
+  <g transform="translate(78 44)" opacity="0.95">
+    <ellipse cx="14" cy="6" rx="14" ry="6" fill="url(#disk)"/>
+    <path d="M0 6v30c0 3.3 6.3 6 14 6s14-2.7 14-6V6c0 3.3-6.3 6-14 6S0 9.3 0 6z" fill="#eaf1fb"/>
+    <path d="M0 17c0 3.3 6.3 6 14 6s14-2.7 14-6" fill="none" stroke="#a9c0e4" stroke-width="2"/>
+    <path d="M0 28c0 3.3 6.3 6 14 6s14-2.7 14-6" fill="none" stroke="#a9c0e4" stroke-width="2"/>
+  </g>
+</svg>

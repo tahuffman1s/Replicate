@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Replicate
+GenericName=SQL Server database restorer
+Comment=Restore SQL Server databases from VHD images into a Windows VM you own
+Exec=replicate
+Icon=io.github.tahuffman1s.Replicate
+Terminal=false
+Type=Application
+Categories=Development;Database;System;
+Keywords=SQL;SQL Server;VHD;VHDX;restore;clone;libvirt;KVM;
+StartupNotify=true

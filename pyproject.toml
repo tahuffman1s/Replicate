@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "replicate"
+version = "0.1.0"
+description = "Restore SQL Server databases from VHD images into a locally managed Windows VM"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.11"
+authors = [{ name = "Travis Huffman" }]
+keywords = ["sql-server", "vhd", "vhdx", "libvirt", "kvm", "libadwaita", "gtk4"]
+classifiers = [
+  "Environment :: X11 Applications :: GTK",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Database",
+  "Topic :: System :: Emulators",
+]
+dependencies = [
+  "PyGObject>=3.46",
+  "pycairo>=1.25",
+  "python-tds>=1.15",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+replicate = "replicate.main:main"
+
+[project.urls]
+Homepage = "https://github.com/tahuffman1s/Replicate"
+Issues = "https://github.com/tahuffman1s/Replicate/issues"
+
+[tool.setuptools.packages.find]
+include = ["replicate*"]
+
+[tool.setuptools.package-data]
+replicate = ["ui/style.css", "guest/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
