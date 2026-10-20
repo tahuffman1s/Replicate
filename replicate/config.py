@@ -136,6 +136,14 @@ class MonitorSettings:
 
 
 @dataclass
+class KerberosSettings:
+    # Hand ticket requests to Kerberus (github.com/tahuffman1s/kerberus) when it is installed.
+    use_kerberus: bool = True
+    # Where Kerberus is, when it is not on PATH or in a desktop entry (e.g. an AppImage in ~/Applications).
+    kerberus_path: str = ""
+
+
+@dataclass
 class UiSettings:
     window_width: int = 1180
     window_height: int = 760
@@ -150,6 +158,7 @@ class AppConfig:
     servers: list[SqlServer] = field(default_factory=list)
     vhd: VhdSettings = field(default_factory=VhdSettings)
     monitor: MonitorSettings = field(default_factory=MonitorSettings)
+    kerberos: KerberosSettings = field(default_factory=KerberosSettings)
     ui: UiSettings = field(default_factory=UiSettings)
 
     def server(self, server_id: str) -> SqlServer | None:
@@ -240,7 +249,7 @@ def _coerce(ftype: Any, value: Any) -> Any:
     return value
 
 
-for _cls in (VmSettings, SqlServer, VhdSettings, MonitorSettings, UiSettings, RestoredDatabase, Mount):
+for _cls in (VmSettings, SqlServer, VhdSettings, MonitorSettings, KerberosSettings, UiSettings, RestoredDatabase, Mount):
     _NESTED[_cls.__name__] = _cls
 
 

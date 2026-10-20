@@ -170,8 +170,12 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     # -- misc --------------------------------------------------------------
-    def show_toast(self, text: str) -> None:
-        self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
+    def show_toast(self, text: str, button: str | None = None, callback=None) -> None:
+        toast = Adw.Toast(title=text, timeout=4 if not button else 8)
+        if button and callback:
+            toast.set_button_label(button)
+            toast.connect("button-clicked", lambda *_: callback())
+        self.toasts.add_toast(toast)
 
     def _on_close(self, *_args) -> bool:
         width, height = self.get_default_size()

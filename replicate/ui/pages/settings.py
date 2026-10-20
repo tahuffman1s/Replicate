@@ -73,6 +73,20 @@ class SettingsPage(Adw.PreferencesPage):
                     lambda v: setattr(m, "trace_exclude_apps", [x.strip() for x in v.split(",") if x.strip()]))
         self.add(g)
 
+        # -- Kerberos ------------------------------------------------------
+        g = Adw.PreferencesGroup(title="Kerberos")
+        g.set_description("Windows authentication with the ticket this computer holds. Kerberus (a ticket manager) keeps tickets renewed and can sign in for Replicate.")
+        kb = ctx.config.kerberos
+        self._switch(g, "Sign in with Kerberus when it is installed", "Get Ticket opens Kerberus instead of asking for the password here", kb.use_kerberus, lambda v: setattr(kb, "use_kerberus", v))
+        self.kerberus_row = self._file_row(g, "Kerberus location", kb.kerberus_path, lambda v: setattr(kb, "kerberus_path", v), "Only needed when it is not on PATH or in a desktop entry (an AppImage in a folder, say)")
+        self.kerberus_status = Adw.ActionRow(use_markup=False, title="Kerberus", subtitle="Looking…")
+        get_it = text_button("Get Kerberus", lambda: Gtk.UriLauncher(uri="https://github.com/tahuffman1s/kerberus/releases/latest").launch(self.get_root(), None, None, None))
+        self.kerberus_status.add_suffix(get_it)
+        self.kerberus_get_button = get_it
+        g.add(self.kerberus_status)
+        self.add(g)
+        self._check_kerberus()
+
         # -- Appearance ----------------------------------------------------
         g = Adw.PreferencesGroup(title="Appearance")
         scheme = Adw.ComboRow(title="Colour scheme")
@@ -177,6 +191,22 @@ class SettingsPage(Adw.PreferencesPage):
             self.ctx.toast("virtio-win.iso is ready")
 
         run_in_thread(self.ctx.vm.download_virtio_win, dest, progress, on_done=done, on_error=lambda e: self.ctx.toast(f"Download failed: {e} ({VIRTIO_WIN_URL})"), name="virtio-dl")
+
+    def _check_kerberus(self) -> None:
+        from replicate.sql import kerberos, kerberus_app
+
+        kerberus = self.ctx.kerberus()
+
+        def done(caches) -> None:
+            if not kerberus.available:
+                self.kerberus_status.set_subtitle("Not found" + ("" if kerberos.available else "; python-gssapi is also missing, so Kerberos sign-in is off"))
+                self.kerberus_get_button.set_visible(True)
+                return
+            self.kerberus_get_button.set_visible(False)
+            who = ", ".join(c.describe() for c in caches[:4]) or "no tickets right now"
+            self.kerberus_status.set_subtitle(f"{kerberus.label} ({kerberus.source}) · {who}")
+
+        run_in_thread(lambda: kerberus_app.list_caches(kerberus), on_done=done, on_error=lambda e: self.kerberus_status.set_subtitle(str(e)), name="kerberus")
 
     def _check_host(self) -> None:
         self.host_row.set_title("Checking…")

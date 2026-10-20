@@ -137,6 +137,18 @@ Three ways to sign in to a server, chosen per server in *Add server*:
   dialog logs you in to the domain (or run `kinit user@REALM`); desktops
   joined with sssd or realmd have one from login already.
 
+**With Kerberus.** [Kerberus](https://github.com/tahuffman1s/kerberus) is a
+ticket manager for the same desktops: it signs in, keeps tickets renewed in
+the background and can sign in again by itself with a saved password. When it
+is installed (on PATH, or as an AppImage that left its autostart or desktop
+entry behind, or pointed to in *Settings → Kerberos*), Replicate works with it
+instead of around it: the server dialog shows the principals Kerberus holds
+and which one matches the server, *Sign in with Kerberus…* opens Kerberus's
+own sign-in dialog for that principal (starting Kerberus if it is not
+running), and a connection that fails for want of a ticket offers the same.
+Tickets Kerberus issues are the ones Replicate uses, because both go through
+the machine's credential caches; nothing is copied between the two apps.
+
 Kerberos needs, on the Linux side, the `python3-gssapi` bindings (bundled in
 the AppImage and the Nix package) and a working `/etc/krb5.conf` for the
 realm, which `realm join` or `sssd` write for you; otherwise DNS discovery

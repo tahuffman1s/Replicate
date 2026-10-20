@@ -130,6 +130,19 @@ class ServersPage(Gtk.ScrolledWindow):
             self._status[server.id] = ("offline", "bad")
             self._set_pill(row, "offline", "bad")
             row.set_tooltip_text(str(exc))
+            message = str(exc)
+            if server.auth == "kerberos" and ("ticket" in message.lower() or "credentials" in message.lower()):
+                kerberus = self.ctx.kerberus()
+                if kerberus.available:
+                    from replicate.sql import kerberus_app
+
+                    self.get_root().show_toast(
+                        f"{server.name}: no usable Kerberos ticket for {server.account}",
+                        "Sign in with Kerberus",
+                        lambda: run_in_thread(kerberus_app.sign_in, kerberus, server.account, name="kerberus-sign-in"),
+                    )
+                    return
+            self.ctx.toast(f"{server.name}: {message}"[:200])
 
         run_in_thread(self.ctx.registry.test, server, on_done=done, on_error=failed, name="sql-check")
 

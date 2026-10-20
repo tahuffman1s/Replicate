@@ -65,3 +65,11 @@ class AppContext:
 
     def toast(self, text: str) -> None:
         self.emit(TOAST, text)
+
+    def kerberus(self):
+        """Kerberus, if the user wants it used and it can be found (cheap; re-looked-up each call)."""
+        from replicate.sql import kerberus_app
+
+        if not self.config.kerberos.use_kerberus:
+            return kerberus_app.Kerberus()
+        return kerberus_app.find_kerberus(self.config.kerberos.kerberus_path)

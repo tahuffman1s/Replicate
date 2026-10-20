@@ -62,10 +62,21 @@ class ServerDialog(Adw.Dialog):
         self.password = Adw.PasswordEntryRow(title="Password" + (" (blank keeps the saved one)" if self.editing else ""))
         auth.add(self.password)
         self.ticket_row = Adw.ActionRow(use_markup=False, title="Kerberos ticket", subtitle="Checking…")
+        self.ticket_refresh = Gtk.Button(icon_name="view-refresh-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Check again")
+        self.ticket_refresh.add_css_class("flat")
+        self.ticket_refresh.connect("clicked", lambda *_: self._refresh_ticket())
+        self.ticket_row.add_suffix(self.ticket_refresh)
+        self.kerberus_button = Gtk.Button(icon_name="window-new-symbolic", valign=Gtk.Align.CENTER, visible=False, tooltip_text="Open Kerberus")
+        self.kerberus_button.add_css_class("flat")
+        self.kerberus_button.update_property([Gtk.AccessibleProperty.LABEL], ["Open Kerberus"])
+        self.kerberus_button.connect("clicked", self._on_open_kerberus)
+        self.ticket_row.add_suffix(self.kerberus_button)
         self.ticket_button = Gtk.Button(label="Get Ticket…", valign=Gtk.Align.CENTER)
         self.ticket_button.connect("clicked", self._on_get_ticket)
         self.ticket_row.add_suffix(self.ticket_button)
         auth.add(self.ticket_row)
+        for row in (self.domain, self.user):
+            row.connect("changed", lambda *_: self._ticket_dirty())
         self.spn = Adw.EntryRow(title="Service principal (blank: MSSQLSvc/host:port)", text=s.spn)
         auth.add(self.spn)
         self.database = Adw.EntryRow(title="Default database", text=s.database)
@@ -104,23 +115,85 @@ class ServerDialog(Adw.Dialog):
         if mode == "kerberos":
             self._refresh_ticket()
 
-    def _refresh_ticket(self) -> None:
+    def _ticket_dirty(self) -> None:
+        if self._auth_mode() == "kerberos" and not getattr(self, "_ticket_pending", False):
+            self._ticket_pending = True
+            from gi.repository import GLib
+
+            GLib.timeout_add(600, lambda: (setattr(self, "_ticket_pending", False), self._refresh_ticket()) and False)
+
+    def _wanted_principal(self) -> str:
         from replicate.sql import kerberos
+
+        return kerberos.principal_for(self.user.get_text(), self.domain.get_text())
+
+    def _refresh_ticket(self) -> None:
+        from replicate.sql import kerberos, kerberus_app
 
         if not kerberos.available():
             self.ticket_row.set_subtitle("python-gssapi is not installed; Kerberos is unavailable on this computer")
             self.ticket_button.set_sensitive(False)
             return
+        wanted = self._wanted_principal()
+        kerberus = self.ctx.kerberus()
+        self.kerberus_button.set_visible(kerberus.available)
+        self.ticket_button.set_label("Get Ticket…" if not kerberus.available else "Sign In with Kerberus…")
 
-        def done(ticket) -> None:
-            if ticket is None:
-                self.ticket_row.set_subtitle("No ticket on this computer")
+        def work():
+            caches = kerberus_app.list_caches(kerberus) if kerberus.available else []
+            if caches:
+                return ("kerberus", kerberus_app.cache_for(caches, wanted), caches)
+            return ("local", kerberos.current_ticket(), [])
+
+        def done(result) -> None:
+            source, found, caches = result
+            if found is None:
+                others = ", ".join(c.principal for c in caches[:2])
+                if wanted and "@" in wanted:
+                    text = f"No ticket for {wanted}"
+                else:
+                    text = "No ticket on this computer"
+                if others:
+                    text += f"; Kerberus has {others}"
+                self.ticket_row.set_subtitle(text)
+            elif source == "kerberus":
+                mismatch = wanted and "@" in wanted and found.principal.lower() != wanted.lower()
+                self.ticket_row.set_subtitle(found.describe() + (" · different realm than the domain above" if mismatch else ""))
             else:
-                self.ticket_row.set_subtitle(ticket.describe())
+                self.ticket_row.set_subtitle(found.describe())
 
-        run_in_thread(kerberos.current_ticket, on_done=done, on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="klist")
+        run_in_thread(work, on_done=done, on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="tickets")
+
+    def _on_open_kerberus(self, *_args) -> None:
+        from replicate.sql import kerberus_app
+
+        if not kerberus_app.show(self.ctx.kerberus()):
+            self.ctx.toast("Kerberus could not be started")
 
     def _on_get_ticket(self, *_args) -> None:
+        from replicate.sql import kerberos, kerberus_app
+
+        kerberus = self.ctx.kerberus()
+        if kerberus.available:
+            principal = self._wanted_principal()
+            self.ticket_row.set_subtitle(f"Asking Kerberus to sign in as {principal}…")
+
+            def done(reached: bool) -> None:
+                if reached:
+                    self.ctx.toast("Finish signing in in Kerberus; the ticket shows up here when it is issued")
+                    from gi.repository import GLib
+
+                    for delay in (5, 15, 40):
+                        GLib.timeout_add_seconds(delay, lambda: (self._refresh_ticket(), False)[1])
+                else:
+                    self.ticket_row.set_subtitle("Kerberus did not respond; using the built-in sign-in")
+                    self._builtin_get_ticket()
+
+            run_in_thread(kerberus_app.sign_in, kerberus, principal, on_done=done, on_error=lambda e: self._builtin_get_ticket(), name="kerberus-sign-in")
+            return
+        self._builtin_get_ticket()
+
+    def _builtin_get_ticket(self) -> None:
         from replicate.sql import kerberos
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
