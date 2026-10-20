@@ -14,7 +14,7 @@ from replicate.host import preflight  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
 from replicate.ui.context import INSTALL_PROGRESS, MOUNTS_CHANGED, SERVERS_CHANGED, VM_STATUS, AppContext  # noqa: E402
 from replicate.ui.dialogs.create_vm import CreateVmDialog, resume_install  # noqa: E402
-from replicate.ui.widgets.common import confirm, status_label, text_button  # noqa: E402
+from replicate.ui.widgets.common import confirm, set_status, status_label, status_page, text_button  # noqa: E402
 from replicate.vm.manager import VmStatus  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -30,16 +30,32 @@ class OverviewPage(Gtk.ScrolledWindow):
         self._services_timer: int | None = None
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_child(outer)
+        self.banner = Adw.Banner()
+        self.banner.set_button_label("Details")
+        self.banner.connect("button-clicked", lambda *_: self._show_preflight())
+        self._preflight = None
+        outer.append(self.banner)
+
+        # Either the "nothing here yet" page or the real content.
+        self.switcher = Gtk.Stack()
+        self.switcher.set_vexpand(True)
+        outer.append(self.switcher)
+        self.empty = status_page(
+            "computer-symbolic",
+            "No SQL host VM yet",
+            "Replicate creates a Windows VM with SQL Server for you, in the background. "
+            "Set the Windows ISO and the instance names in Settings first, then create it here.",
+            text_button("Create the VM", self._on_create, css="suggested-action"),
+            text_button("Open Settings", lambda: self.get_root().show_page("settings")),
+        )
+        self.switcher.add_named(self.empty, "empty")
         clamp = Adw.Clamp(maximum_size=900, tightening_threshold=700)
-        self.set_child(clamp)
+        self.switcher.add_named(clamp, "content")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         box.add_css_class("page-content")
         clamp.set_child(box)
-
-        self.banner = Adw.Banner()
-        self.banner.set_button_label("Check again")
-        self.banner.connect("button-clicked", lambda *_: self._run_preflight())
-        box.append(self.banner)
 
         # Hero card
         hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -114,13 +130,28 @@ class OverviewPage(Gtk.ScrolledWindow):
     # -- preflight ----------------------------------------------------------
     def _run_preflight(self) -> None:
         def done(result) -> None:
+            self._preflight = result
             if result.ok:
                 self.banner.set_revealed(False)
             else:
-                self.banner.set_title("Host is missing something: " + "; ".join(result.problems))
+                count = len(result.problems)
+                self.banner.set_title(f"This computer is missing {count} thing{'s' if count != 1 else ''} Replicate needs")
                 self.banner.set_revealed(True)
 
         run_in_thread(preflight, self.ctx.config.vm.uri, on_done=done, on_error=lambda e: None, name="preflight")
+
+    def _show_preflight(self) -> None:
+        result = self._preflight
+        body = "\n\n".join(f"• {p}" for p in (result.problems if result else [])) or "Nothing is missing."
+        if result and result.notes:
+            body += "\n\nAlso worth knowing:\n" + "\n".join(f"• {n}" for n in result.notes)
+        dialog = Adw.AlertDialog(heading="What this computer needs", body=body)
+        dialog.add_response("close", "Close")
+        dialog.add_response("again", "Check Again")
+        dialog.set_response_appearance("again", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("again")
+        dialog.connect("response", lambda _d, r: self._run_preflight() if r == "again" else None)
+        dialog.present(self.get_root())
 
     # -- status -------------------------------------------------------------
     def _on_status(self, status: VmStatus) -> None:
@@ -131,12 +162,10 @@ class OverviewPage(Gtk.ScrolledWindow):
             details.append(status.ip)
         self.vm_sub.set_label(" · ".join(details))
         kind = "good" if status.running and status.agent else "warn" if status.running or status.paused or status.installing else "neutral"
-        self.status_pill.set_label(status.label)
-        for css in ("status-good", "status-warn", "status-bad", "status-neutral"):
-            self.status_pill.remove_css_class(css)
-        self.status_pill.add_css_class(f"status-{kind}")
+        set_status(self.status_pill, status.label, kind)
 
         defined = status.defined
+        self.switcher.set_visible_child_name("content" if defined or status.installing else "empty")
         self.btn_create.set_visible(not defined)
         self.btn_start.set_visible(defined and not status.running and not status.paused)
         self.btn_shutdown.set_visible(status.running)

@@ -12,7 +12,7 @@ from replicate.config import SqlServer  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
 from replicate.ui.context import SERVERS_CHANGED, VM_STATUS, AppContext  # noqa: E402
 from replicate.ui.dialogs.server import DatabasesDialog, LinksDialog, ServerDialog  # noqa: E402
-from replicate.ui.widgets.common import confirm, icon_button, status_label, text_button  # noqa: E402
+from replicate.ui.widgets.common import confirm, icon_button, set_status, status_label, status_page, text_button  # noqa: E402
 
 
 class ServersPage(Gtk.ScrolledWindow):
@@ -20,8 +20,18 @@ class ServersPage(Gtk.ScrolledWindow):
         super().__init__()
         self.ctx = ctx
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.switcher = Gtk.Stack()
+        self.set_child(self.switcher)
+        self.empty = status_page(
+            "network-server-symbolic",
+            "No SQL Servers yet",
+            "Instances inside the Replicate VM appear here once it is set up. "
+            "You can also add any SQL Server you can reach.",
+            text_button("Add Server", self._on_add, css="suggested-action"),
+        )
+        self.switcher.add_named(self.empty, "empty")
         clamp = Adw.Clamp(maximum_size=900, tightening_threshold=700)
-        self.set_child(clamp)
+        self.switcher.add_named(clamp, "content")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         box.add_css_class("page-content")
         clamp.set_child(box)
@@ -49,11 +59,7 @@ class ServersPage(Gtk.ScrolledWindow):
             self.group.remove(row)
         self.rows.clear()
         servers = self.ctx.registry.servers
-        if not servers:
-            empty = Adw.ActionRow(use_markup=False, title="No servers yet", subtitle="Create the VM on the Overview page, or add a server you already have.")
-            self.group.add(empty)
-            self.rows.append(empty)
-            return
+        self.switcher.set_visible_child_name("content" if servers else "empty")
         for server in servers:
             self.group.add(self._make_row(server))
 
@@ -105,11 +111,13 @@ class ServersPage(Gtk.ScrolledWindow):
         return row
 
     def _set_pill(self, row: Adw.ActionRow, text: str, kind: str) -> None:
-        pill: Gtk.Label = row.pill  # type: ignore[attr-defined]
-        pill.set_label(text)
-        for css in ("status-good", "status-warn", "status-bad", "status-neutral"):
-            pill.remove_css_class(css)
-        pill.add_css_class(f"status-{kind}")
+        set_status(row.pill, text, kind)  # type: ignore[attr-defined]
+
+    def on_refresh(self) -> None:
+        self._check_all()
+
+    def on_add(self) -> None:
+        self._on_add()
 
     def _check(self, server: SqlServer, row: Adw.ActionRow) -> None:
         self._set_pill(row, "checking…", "neutral")

@@ -30,6 +30,7 @@ from replicate.ui.app import ReplicateApp  # noqa: E402
 
 PAGES = ["overview", "servers", "images", "activity", "settings"]
 dark = "--dark" in sys.argv
+narrow = "--narrow" in sys.argv
 app = ReplicateApp()
 failures: list[str] = []
 
@@ -42,11 +43,13 @@ def snap(name: str) -> None:
     paintable.snapshot(snapshot, w, h)
     node = snapshot.to_node()
     texture = win.get_native().get_renderer().render_texture(node, Graphene.Rect().init(0, 0, w, h))
-    texture.save_to_png(str(out / f"{name}{'-dark' if dark else ''}.png"))
+    texture.save_to_png(str(out / f"{name}{'-dark' if dark else ''}{'-narrow' if narrow else ''}.png"))
     print("saved", name)
 
 
 def step(i: int = 0) -> bool:
+    if i == 0 and narrow:
+        app.window.set_default_size(640, 760)
     if i >= len(PAGES):
         app.quit()
         return False

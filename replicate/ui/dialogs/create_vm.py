@@ -10,7 +10,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 
 from replicate.tasks import Progress, run_in_thread  # noqa: E402
 from replicate.ui.context import INSTALL_PROGRESS, AppContext  # noqa: E402
-from replicate.ui.widgets.common import error_dialog  # noqa: E402
+from replicate.ui.widgets.common import dialog_header, error_dialog  # noqa: E402
 from replicate.vm.manager import CreateOptions  # noqa: E402
 
 
@@ -22,7 +22,10 @@ class CreateVmDialog(Adw.Dialog):
         vm = ctx.config.vm
 
         view = Adw.ToolbarView()
-        view.add_top_bar(Adw.HeaderBar())
+        header, self.create_button = dialog_header(
+            self, "Recreate" if recreate else "Create", self._on_create, destructive=recreate
+        )
+        view.add_top_bar(header)
         page = Adw.PreferencesPage()
         view.set_content(page)
         self.set_child(view)
@@ -61,14 +64,10 @@ class CreateVmDialog(Adw.Dialog):
         creds.add(self.confirm)
         page.add(creds)
 
-        actions = Adw.PreferencesGroup()
-        self.create_button = Gtk.Button(label="Recreate VM (erases it)" if recreate else "Create VM in the background")
-        self.create_button.add_css_class("destructive-action" if recreate else "suggested-action")
-        self.create_button.add_css_class("pill")
-        self.create_button.set_halign(Gtk.Align.CENTER)
-        self.create_button.connect("clicked", self._on_create)
-        actions.add(self.create_button)
-        page.add(actions)
+        if recreate:
+            warning = Adw.PreferencesGroup()
+            warning.add(Adw.ActionRow(use_markup=False, title="This erases the current VM", subtitle="Its disk and everything inside Windows are deleted before the new install starts.", icon_name="dialog-warning-symbolic"))
+            page.add(warning)
 
     def _go_settings(self, *_args) -> None:
         window = self.get_root()

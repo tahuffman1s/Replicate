@@ -15,6 +15,7 @@ from gi.repository import Adw, Gio, GObject, Gtk, Pango  # noqa: E402
 def icon_button(icon: str, tooltip: str, callback: Callable[[], None] | None = None, *, css: str | None = None) -> Gtk.Button:
     button = Gtk.Button(icon_name=icon, valign=Gtk.Align.CENTER)
     button.set_tooltip_text(tooltip)
+    button.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
     if css:
         button.add_css_class(css)
     if callback:
@@ -31,11 +32,50 @@ def text_button(label: str, callback: Callable[[], None] | None = None, *, css: 
     return button
 
 
+STATUS_CLASSES = {"good": "success", "warn": "warning", "bad": "error", "neutral": "dim-label"}
+
+
 def status_label(text: str, kind: str = "neutral") -> Gtk.Label:
     label = Gtk.Label(label=text, valign=Gtk.Align.CENTER)
     label.add_css_class("status-pill")
-    label.add_css_class(f"status-{kind}")
+    label.add_css_class("caption-heading")
+    label.add_css_class(STATUS_CLASSES.get(kind, "dim-label"))
     return label
+
+
+def set_status(label: Gtk.Label, text: str, kind: str) -> None:
+    label.set_label(text)
+    for css in STATUS_CLASSES.values():
+        label.remove_css_class(css)
+    label.add_css_class(STATUS_CLASSES.get(kind, "dim-label"))
+
+
+def dialog_header(dialog: Adw.Dialog, action_label: str, on_action: Callable[[], None], *,
+                  destructive: bool = False) -> tuple[Adw.HeaderBar, Gtk.Button]:
+    """A dialog header the HIG way: Cancel on the left, the one action on the right, no close button."""
+    header = Adw.HeaderBar()
+    header.set_show_start_title_buttons(False)
+    header.set_show_end_title_buttons(False)
+    cancel = Gtk.Button(label="Cancel")
+    cancel.connect("clicked", lambda *_: dialog.close())
+    header.pack_start(cancel)
+    action = Gtk.Button(label=action_label)
+    action.add_css_class("destructive-action" if destructive else "suggested-action")
+    action.connect("clicked", lambda *_: on_action())
+    header.pack_end(action)
+    dialog.set_default_widget(action)
+    return header, action
+
+
+def status_page(icon: str, title: str, description: str, *buttons: Gtk.Widget) -> Adw.StatusPage:
+    page = Adw.StatusPage(icon_name=icon, title=title, description=description)
+    if buttons:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, halign=Gtk.Align.CENTER)
+        for b in buttons:
+            b.add_css_class("pill")
+            box.append(b)
+        page.set_child(box)
+    return page
 
 
 def heading(text: str, description: str | None = None) -> Gtk.Box:
@@ -45,6 +85,7 @@ def heading(text: str, description: str | None = None) -> Gtk.Box:
     box.append(title)
     if description:
         sub = Gtk.Label(label=description, xalign=0, wrap=True)
+        sub.set_max_width_chars(60)
         sub.add_css_class("dim-label")
         sub.add_css_class("caption")
         box.append(sub)

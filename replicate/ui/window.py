@@ -24,8 +24,8 @@ log = logging.getLogger(__name__)
 PAGES = [
     ("overview", "Overview", "computer-symbolic"),
     ("servers", "SQL Servers", "network-server-symbolic"),
-    ("images", "Images & Clones", "drive-harddisk-symbolic"),
-    ("activity", "Activity", "utilities-system-monitor-symbolic"),
+    ("images", "Images & Clones", "drive-multidisk-symbolic"),
+    ("activity", "Activity", "replicate-activity-symbolic"),
     ("settings", "Settings", "emblem-system-symbolic"),
 ]
 
@@ -37,7 +37,7 @@ class MainWindow(Adw.ApplicationWindow):
         super().__init__(application=app, title=APP_NAME)
         self.ctx = ctx
         self.set_default_size(ctx.config.ui.window_width, ctx.config.ui.window_height)
-        self.set_size_request(760, 520)
+        self.set_size_request(600, 480)
 
         self.toasts = Adw.ToastOverlay()
         self.set_content(self.toasts)
@@ -45,6 +45,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.split.set_min_sidebar_width(200)
         self.split.set_max_sidebar_width(240)
         self.toasts.set_child(self.split)
+        # Narrow windows: the sidebar and the page take turns, with a back button.
+        breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 860sp"))
+        breakpoint.add_setter(self.split, "collapsed", True)
+        self.add_breakpoint(breakpoint)
 
         # Sidebar
         sidebar_box = Adw.ToolbarView()
@@ -55,9 +59,16 @@ class MainWindow(Adw.ApplicationWindow):
         from gi.repository import Gio
 
         menu = Gio.Menu()
-        menu.append("Settings", "app.preferences")
-        menu.append("About Replicate", "app.about")
-        menu.append("Quit", "app.quit")
+        section = Gio.Menu()
+        section.append("Settings", "app.preferences")
+        section.append("Keyboard Shortcuts", "app.shortcuts")
+        section.append("About Replicate", "app.about")
+        menu.append_section(None, section)
+        section = Gio.Menu()
+        section.append("Quit", "app.quit")
+        menu.append_section(None, section)
+        menu_button.set_tooltip_text("Main menu")
+        menu_button.set_primary(True)
         menu_button.set_menu_model(menu)
         header.pack_end(menu_button)
         sidebar_box.add_top_bar(header)
@@ -67,10 +78,11 @@ class MainWindow(Adw.ApplicationWindow):
         for key, label, icon in PAGES:
             row = Gtk.ListBoxRow()
             row.page_key = key  # type: ignore[attr-defined]
-            box = Gtk.Box(spacing=10)
+            box = Gtk.Box(spacing=12)
             box.append(Gtk.Image.new_from_icon_name(icon))
             box.append(Gtk.Label(label=label, xalign=0))
             row.set_child(box)
+            row.update_property([Gtk.AccessibleProperty.LABEL], [label])
             self.sidebar.append(row)
         self.sidebar.connect("row-selected", self._on_row_selected)
         sidebar_box.set_content(self.sidebar)
@@ -99,6 +111,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         ctx.subscribe(TOAST, self.show_toast)
         self.connect("close-request", self._on_close)
+        for name, accel, method in (("refresh", "<primary>r", "on_refresh"), ("add", "<primary>n", "on_add")):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda *_, m=method: self._page_action(m))
+            self.add_action(action)
+            app.set_accels_for_action(f"win.{name}", [accel])
 
         self.show_page(ctx.config.ui.last_page if ctx.config.ui.last_page in self.pages else "overview")
         self._poll_status()
@@ -117,8 +134,15 @@ class MainWindow(Adw.ApplicationWindow):
         if row is not None:
             self._activate_page(row.page_key)  # type: ignore[attr-defined]
 
+    def _page_action(self, method: str) -> None:
+        page = self.pages[self.stack.get_visible_child_name()]
+        handler = getattr(page, method, None)
+        if handler:
+            handler()
+
     def _activate_page(self, key: str) -> None:
         self.stack.set_visible_child_name(key)
+        self.split.set_show_content(True)
         label = next(label for k, label, _ in PAGES if k == key)
         self.title_widget.set_title(label)
         self.ctx.config.ui.last_page = key

@@ -21,6 +21,19 @@ from replicate.ui.widgets.common import Table, heading, text_button  # noqa: E40
 log = logging.getLogger(__name__)
 
 
+def _flow(children: list[Gtk.Widget], *, max_per_line: int, min_width: int = 0) -> Gtk.FlowBox:
+    """Tiles and charts that reflow with the window width instead of forcing a minimum."""
+    flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True, column_spacing=10, row_spacing=10,
+                       min_children_per_line=1, max_children_per_line=max_per_line, activate_on_single_click=False)
+    for child in children:
+        if min_width:
+            child.set_size_request(min_width, -1)
+        flow.append(child)
+    for i in range(len(children)):
+        flow.get_child_at_index(i).set_focusable(False)
+    return flow
+
+
 def _card(child: Gtk.Widget) -> Gtk.Box:
     box = Gtk.Box()
     box.add_css_class("card")
@@ -46,9 +59,11 @@ class ActivityPage(Gtk.ScrolledWindow):
 
         # Toolbar
         bar = Gtk.Box(spacing=10)
+        bar.add_css_class("toolbar")
         bar.append(Gtk.Label(label="Server"))
         self.server_model = Gtk.StringList()
         self.server_drop = Gtk.DropDown(model=self.server_model)
+        self.server_drop.update_property([Gtk.AccessibleProperty.LABEL], ["Server to watch"])
         self.server_drop.connect("notify::selected", self._on_server_changed)
         bar.append(self.server_drop)
         self.monitor_button = Gtk.ToggleButton(label="Monitor")
@@ -56,6 +71,7 @@ class ActivityPage(Gtk.ScrolledWindow):
         self.monitor_button.connect("toggled", self._on_monitor_toggled)
         bar.append(self.monitor_button)
         self.window_drop = Gtk.DropDown(model=Gtk.StringList.new(["Last 5 min", "Last 15 min", "Last 60 min"]))
+        self.window_drop.update_property([Gtk.AccessibleProperty.LABEL], ["Chart time window"])
         self.window_drop.connect("notify::selected", self._on_window_changed)
         bar.append(self.window_drop)
         self.status = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
@@ -64,35 +80,23 @@ class ActivityPage(Gtk.ScrolledWindow):
         box.append(bar)
 
         # Tiles
-        tiles = Gtk.Box(spacing=10, homogeneous=True)
         self.tile_cpu = StatTile("SQL Server CPU", unit="%", color_index=0)
         self.tile_batches = StatTile("Batches / s", color_index=1)
         self.tile_requests = StatTile("Active requests", color_index=2)
         self.tile_sessions = StatTile("User sessions")
         self.tile_ple = StatTile("Page life expectancy")
         self.tile_blocked = StatTile("Blocked")
-        for t in (self.tile_cpu, self.tile_batches, self.tile_requests, self.tile_sessions, self.tile_ple, self.tile_blocked):
-            tiles.append(t)
-        box.append(tiles)
+        box.append(_flow([self.tile_cpu, self.tile_batches, self.tile_requests, self.tile_sessions, self.tile_ple, self.tile_blocked], max_per_line=6))
 
         # Charts
-        grid = Gtk.Grid(column_spacing=10, row_spacing=10, column_homogeneous=True)
         self.chart_cpu = LineChart([SeriesSpec("cpu_sql", "SQL Server", 0), SeriesSpec("cpu_other", "Other processes", 1)], unit="%", y_max=100, stacked=True, title="CPU")
         self.chart_rates = LineChart([SeriesSpec("rate_batches", "Batches/s", 0), SeriesSpec("rate_transactions", "Transactions/s", 1), SeriesSpec("rate_compilations", "Compilations/s", 2)], title="Throughput")
         self.chart_waits = LineChart([SeriesSpec(f"wait_{c}", c, i) for i, c in enumerate(WAIT_CATEGORIES)], unit="ms/s", stacked=True, title="Wait time by category", height=190)
         self.chart_io = LineChart([SeriesSpec("rate_page_reads", "Page reads/s", 0), SeriesSpec("rate_page_writes", "Page writes/s", 1), SeriesSpec("rate_lock_waits", "Lock waits/s", 7)], title="I/O and locking")
-        grid.attach(_card(self.chart_cpu), 0, 0, 1, 1)
-        grid.attach(_card(self.chart_rates), 1, 0, 1, 1)
-        grid.attach(_card(self.chart_waits), 0, 1, 1, 1)
-        grid.attach(_card(self.chart_io), 1, 1, 1, 1)
-        box.append(grid)
-
-        second = Gtk.Box(spacing=10, homogeneous=True)
         self.chart_top_waits = BarChart(unit="ms/s", title="Top wait types", color_index=6)
-        second.append(_card(self.chart_top_waits))
         self.chart_memory = LineChart([SeriesSpec("gauge_connections", "User connections", 0), SeriesSpec("active_requests", "Active requests", 2)], title="Connections and requests")
-        second.append(_card(self.chart_memory))
-        box.append(second)
+        box.append(_flow([_card(self.chart_cpu), _card(self.chart_rates), _card(self.chart_waits), _card(self.chart_io),
+                          _card(self.chart_top_waits), _card(self.chart_memory)], max_per_line=2, min_width=320))
 
         # Requests
         box.append(heading("Running now", "Requests executing on the server (sys.dm_exec_requests)."))
@@ -108,8 +112,10 @@ class ActivityPage(Gtk.ScrolledWindow):
 
         # Trace
         trace_head = Gtk.Box(spacing=10)
-        trace_head.append(heading("Statement trace", "Extended Events session on the server, like a Profiler trace: batches and procedure calls as they complete."))
-        trace_head.get_first_child().set_hexpand(True)
+        trace_title = heading("Statement trace", "Extended Events session on the server, like a Profiler trace: batches and procedure calls as they complete.")
+        trace_title.set_hexpand(True)
+        trace_title.get_first_child().set_ellipsize(Pango.EllipsizeMode.END)
+        trace_head.append(trace_title)
         self.trace_button = Gtk.ToggleButton(label="Start trace")
         self.trace_button.add_css_class("suggested-action")
         self.trace_button.connect("toggled", self._on_trace_toggled)
@@ -123,23 +129,16 @@ class ActivityPage(Gtk.ScrolledWindow):
             trace_head.append(w)
         box.append(trace_head)
 
-        trace_tiles = Gtk.Box(spacing=10, homogeneous=True)
         self.tile_events = StatTile("Events / s", color_index=0)
         self.tile_avg = StatTile("Avg duration", unit="ms", color_index=1)
         self.tile_max = StatTile("Max duration", unit="ms", color_index=7)
         self.tile_count = StatTile("Captured")
-        for t in (self.tile_events, self.tile_avg, self.tile_max, self.tile_count):
-            trace_tiles.append(t)
-        box.append(trace_tiles)
+        box.append(_flow([self.tile_events, self.tile_avg, self.tile_max, self.tile_count], max_per_line=4))
 
-        trace_charts = Gtk.Box(spacing=10, homogeneous=True)
         self.chart_events = LineChart([SeriesSpec("events", "Events/s", 0)], title="Event rate")
         self.chart_hist = BarChart(title="Duration distribution", color_index=1)
         self.chart_top = BarChart(unit="ms", title="Top statements by total time", color_index=6)
-        trace_charts.append(_card(self.chart_events))
-        trace_charts.append(_card(self.chart_hist))
-        trace_charts.append(_card(self.chart_top))
-        box.append(trace_charts)
+        box.append(_flow([_card(self.chart_events), _card(self.chart_hist), _card(self.chart_top)], max_per_line=3, min_width=300))
 
         self.trace_table = Table(
             [("Time", "time", 90, "start"), ("Event", "name", 140, "start"), ("Duration ms", "duration_ms", 95, "end"), ("CPU ms", "cpu_ms", 75, "end"),
@@ -363,6 +362,9 @@ class ActivityPage(Gtk.ScrolledWindow):
 
     def _show_text(self, row: dict) -> None:
         self.detail.get_buffer().set_text(str(row.get("text", "")))
+
+    def on_refresh(self) -> None:
+        self._reload_servers()
 
     def shutdown(self) -> None:
         if self.monitor:

@@ -14,7 +14,7 @@ from replicate.config import Mount  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
 from replicate.ui.context import CONFIG_CHANGED, MOUNTS_CHANGED, AppContext  # noqa: E402
 from replicate.ui.dialogs.restore import AttachDialog, RestoreDialog, detach_mount  # noqa: E402
-from replicate.ui.widgets.common import confirm, file_chooser, icon_button, status_label, text_button  # noqa: E402
+from replicate.ui.widgets.common import confirm, file_chooser, icon_button, status_label, status_page, text_button  # noqa: E402
 from replicate.util import human_size  # noqa: E402
 from replicate.vhd import clones as cl  # noqa: E402
 from replicate.vhd.images import ImageInfo, scan  # noqa: E402
@@ -27,8 +27,19 @@ class ImagesPage(Gtk.ScrolledWindow):
         self.images: list[ImageInfo] = []
         self._scanning = False
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.switcher = Gtk.Stack()
+        self.set_child(self.switcher)
+        self.empty = status_page(
+            "drive-multidisk-symbolic",
+            "No images yet",
+            "Add the folder your VHD or VHDX images live in, or open a single image. "
+            "Replicate attaches copy-on-write clones of them to the VM and restores the databases on them.",
+            text_button("Add Folder", self._on_add_folder, css="suggested-action"),
+            text_button("Open a File…", self._on_open_file),
+        )
+        self.switcher.add_named(self.empty, "empty")
         clamp = Adw.Clamp(maximum_size=960, tightening_threshold=760)
-        self.set_child(clamp)
+        self.switcher.add_named(clamp, "content")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         box.add_css_class("page-content")
         clamp.set_child(box)
@@ -74,7 +85,18 @@ class ImagesPage(Gtk.ScrolledWindow):
         self.refresh_clones()
 
     # -- folders ------------------------------------------------------------
+    def _update_empty(self) -> None:
+        has_anything = bool(self.ctx.config.vhd.image_dirs or self.ctx.mounter.mounts() or cl.list_clones(self.ctx.config.vhd.clones_dir))
+        self.switcher.set_visible_child_name("content" if has_anything else "empty")
+
+    def on_refresh(self) -> None:
+        self.rescan()
+
+    def on_add(self) -> None:
+        self._on_add_folder()
+
     def _refresh_folders(self) -> None:
+        self._update_empty()
         for row in self.folder_rows:
             self.folders_group.remove(row)
         self.folder_rows.clear()
@@ -171,6 +193,7 @@ class ImagesPage(Gtk.ScrolledWindow):
 
     # -- mounts -------------------------------------------------------------
     def refresh_mounts(self) -> None:
+        self._update_empty()
         for row in self.mount_rows:
             self.mounts_group.remove(row)
         self.mount_rows.clear()

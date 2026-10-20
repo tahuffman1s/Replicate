@@ -11,7 +11,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from replicate.config import SqlServer  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
 from replicate.ui.context import SERVERS_CHANGED, AppContext  # noqa: E402
-from replicate.ui.widgets.common import error_dialog, status_label  # noqa: E402
+from replicate.ui.widgets.common import dialog_header, error_dialog, status_label  # noqa: E402
 
 
 class ServerDialog(Adw.Dialog):
@@ -23,7 +23,7 @@ class ServerDialog(Adw.Dialog):
         s = self.server
 
         view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
+        header, self.save_button = dialog_header(self, "Save" if self.editing else "Add", self._on_save)
         view.add_top_bar(header)
         page = Adw.PreferencesPage()
         view.set_content(page)
@@ -78,10 +78,6 @@ class ServerDialog(Adw.Dialog):
         test_group.add(test_box)
         page.add(test_group)
 
-        save = Gtk.Button(label="Save" if self.editing else "Add")
-        save.add_css_class("suggested-action")
-        save.connect("clicked", self._on_save)
-        header.pack_end(save)
         self._sync_vm_rows()
 
     def _sync_vm_rows(self) -> None:

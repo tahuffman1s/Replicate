@@ -39,7 +39,7 @@ Issues = "https://github.com/tahuffman1s/Replicate/issues"
 include = ["replicate*"]
 
 [tool.setuptools.package-data]
-replicate = ["ui/style.css", "guest/*"]
+replicate = ["ui/style.css", "ui/icons/*.svg", "guest/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -14,7 +14,7 @@ from replicate.config import Mount, RestoredDatabase, SqlServer  # noqa: E402
 from replicate.sql.connection import SqlError  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
 from replicate.ui.context import MOUNTS_CHANGED, AppContext  # noqa: E402
-from replicate.ui.widgets.common import error_dialog, wrap_label  # noqa: E402
+from replicate.ui.widgets.common import dialog_header, error_dialog, icon_button, wrap_label  # noqa: E402
 from replicate.util import human_size  # noqa: E402
 from replicate.vhd import restore as rs  # noqa: E402
 from replicate.vhd.images import ImageInfo  # noqa: E402
@@ -28,7 +28,7 @@ class AttachDialog(Adw.Dialog):
         self.ctx = ctx
         self.image = image
         view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
+        header, self.go = dialog_header(self, "Attach", self._on_attach)
         view.add_top_bar(header)
         page = Adw.PreferencesPage()
         view.set_content(page)
@@ -56,10 +56,6 @@ class AttachDialog(Adw.Dialog):
                 "chain; merge it in Windows (Merge-VHD) or attach the parent image instead.", css=["warning"]))
             page.add(warn)
 
-        self.go = Gtk.Button(label="Attach")
-        self.go.add_css_class("suggested-action")
-        self.go.connect("clicked", self._on_attach)
-        header.pack_end(self.go)
         self._sync()
 
     def _sync(self) -> None:
@@ -109,7 +105,7 @@ class RestoreDialog(Adw.Dialog):
         self.plan_rows: list[tuple[Adw.ActionRow, Gtk.CheckButton, Gtk.Entry, object]] = []
 
         view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
+        header, self.go = dialog_header(self, "Restore selected", self._on_go)
         view.add_top_bar(header)
         self.page = Adw.PreferencesPage()
         view.set_content(self.page)
@@ -148,14 +144,9 @@ class RestoreDialog(Adw.Dialog):
         self.log_group.set_visible(False)
         self.page.add(self.log_group)
 
-        self.go = Gtk.Button(label="Restore selected")
-        self.go.add_css_class("suggested-action")
         self.go.set_sensitive(False)
-        self.go.connect("clicked", self._on_go)
-        header.pack_end(self.go)
-        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Look at the disk again")
-        refresh.connect("clicked", lambda *_: self._online())
-        header.pack_start(refresh)
+        refresh = icon_button("view-refresh-symbolic", "Look at the disk again", self._online)
+        header.pack_end(refresh)
         self._online()
 
     # -- disk -------------------------------------------------------------

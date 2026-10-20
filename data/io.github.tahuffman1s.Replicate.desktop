@@ -6,6 +6,6 @@ Exec=replicate
 Icon=io.github.tahuffman1s.Replicate
 Terminal=false
 Type=Application
-Categories=Development;Database;System;
+Categories=Development;Database;
 Keywords=SQL;SQL Server;VHD;VHDX;restore;clone;libvirt;KVM;
 StartupNotify=true

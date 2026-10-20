@@ -15,13 +15,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-gi python3-gi-cairo python3-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libadwaita-1-0 qemu-utils xvfb
+            libadwaita-1-0 qemu-utils xvfb appstream desktop-file-utils
       - name: Python packages
         run: python3 -m pip install --break-system-packages python-tds pytest
       - name: Unit tests
         run: python3 -m pytest -q
+      - name: AppStream and desktop file
+        run: |
+          appstreamcli validate --pedantic data/io.github.tahuffman1s.Replicate.metainfo.xml
+          desktop-file-validate data/io.github.tahuffman1s.Replicate.desktop
       - name: The app starts and renders every page
-        run: xvfb-run -a -s "-screen 0 1280x800x24" python3 tools/smoke.py
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" python3 tools/smoke.py
+          xvfb-run -a -s "-screen 0 1280x800x24" python3 tools/smoke.py --dark
+          xvfb-run -a -s "-screen 0 700x820x24" python3 tools/smoke.py --narrow
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -27,13 +27,48 @@
     <name>Travis Huffman</name>
   </developer>
   <content_rating type="oars-1.1"/>
+  <branding>
+    <color type="primary" scheme_preference="light">#99c1f1</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+  <keywords>
+    <keyword>SQL Server</keyword>
+    <keyword>VHD</keyword>
+    <keyword>VHDX</keyword>
+    <keyword>restore</keyword>
+    <keyword>clone</keyword>
+    <keyword>libvirt</keyword>
+    <keyword>KVM</keyword>
+  </keywords>
   <requires>
-    <display_length compare="ge">760</display_length>
+    <display_length compare="ge">360</display_length>
   </requires>
-  <supports>
+  <recommends>
+    <display_length compare="ge">900</display_length>
     <control>keyboard</control>
     <control>pointing</control>
+  </recommends>
+  <supports>
+    <control>touch</control>
   </supports>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Activity: live counters, waits and running requests as charts</caption>
+      <image>https://raw.githubusercontent.com/tahuffman1s/Replicate/main/docs/screenshots/activity.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The statement trace with its rate, duration distribution and top statements</caption>
+      <image>https://raw.githubusercontent.com/tahuffman1s/Replicate/main/docs/screenshots/trace.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Images attached to the VM, image folders and clones</caption>
+      <image>https://raw.githubusercontent.com/tahuffman1s/Replicate/main/docs/screenshots/images.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Linked servers, switched on per server pair</caption>
+      <image>https://raw.githubusercontent.com/tahuffman1s/Replicate/main/docs/screenshots/linked-servers.png</image>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="0.1.0" date="2026-10-20">
       <description><p>First release.</p></description>

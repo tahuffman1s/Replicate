@@ -26,6 +26,9 @@ LOG_DIR = DATA_DIR / "logs"
 PACKAGE_DIR = Path(__file__).resolve().parent
 GUEST_DIR = PACKAGE_DIR / "guest"
 STYLE_CSS = PACKAGE_DIR / "ui" / "style.css"
+ICONS_DIR = PACKAGE_DIR / "ui" / "icons"
+# The hicolor app icon when running from a source checkout (installed builds ship it in share/icons).
+SOURCE_ICONS_DIR = PACKAGE_DIR.parent / "data" / "icons"
 
 
 def ensure_dirs() -> None:

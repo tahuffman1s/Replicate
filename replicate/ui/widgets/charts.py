@@ -403,6 +403,7 @@ class StatTile(Gtk.Box):
         self.add_css_class("card")
         self.add_css_class("stat-tile")
         self.set_hexpand(True)
+        self.set_size_request(120, -1)
         top = Gtk.Box(spacing=6)
         if color_index is not None:
             dot = Gtk.DrawingArea()
@@ -424,6 +425,8 @@ class StatTile(Gtk.Box):
         self.append(top)
         self.value = Gtk.Label(label="–", xalign=0)
         self.value.add_css_class("title-1")
+        self.value.add_css_class("numeric")
+        self.value.set_ellipsize(Pango.EllipsizeMode.END)
         self.append(self.value)
         self.note = Gtk.Label(label="", xalign=0)
         self.note.add_css_class("caption")
