@@ -64,6 +64,11 @@ def step(i: int = 0) -> bool:
 def on_activate(_app) -> None:
     if dark:
         Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+    # REPLICATE_SMOKE_ICON_THEME=hicolor renders with a theme that has none of
+    # the icons, proving the bundled copies are used.
+    theme = os.environ.get("REPLICATE_SMOKE_ICON_THEME")
+    if theme:
+        Gtk.Settings.get_default().set_property("gtk-icon-theme-name", theme)
     GLib.timeout_add(1200, step)
 
 

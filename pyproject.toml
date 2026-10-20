@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "replicate"
-version = "0.1.1"
+version = "0.1.2"
 description = "Restore SQL Server databases from VHD images into a locally managed Windows VM"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -41,7 +41,7 @@ Issues = "https://github.com/tahuffman1s/Replicate/issues"
 include = ["replicate*"]
 
 [tool.setuptools.package-data]
-replicate = ["ui/style.css", "ui/icons/*.svg", "guest/*"]
+replicate = ["ui/style.css", "ui/icons/*.svg", "ui/icons/README", "guest/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

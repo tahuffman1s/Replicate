@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.2" date="2026-10-20">
+      <description>
+        <p>Every symbolic icon the app uses is bundled, so they render under any desktop icon theme.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-10-20">
       <description>
         <p>Windows authentication with a domain, Kerberos sign-in with the host's ticket, and integration with Kerberus for getting and renewing tickets. Adaptive layout, empty-state pages, keyboard shortcuts and other GNOME HIG polish.</p>

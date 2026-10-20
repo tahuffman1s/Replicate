@@ -1,0 +1,7 @@
+Symbolic icons Replicate draws, bundled so they render whatever icon theme
+the desktop uses (GTK 4 does not fall back to Adwaita by itself).
+
+replicate-*.svg are Replicate's own, GPL-3.0-or-later like the rest of the app.
+Every other file is from the Adwaita icon theme (https://gitlab.gnome.org/GNOME/adwaita-icon-theme),
+copyright the GNOME Project, licensed under the GNU LGPL v3 or the Creative
+Commons Attribution-Share Alike 3.0 license, at your option.
