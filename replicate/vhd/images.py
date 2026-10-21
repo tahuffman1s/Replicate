@@ -33,10 +33,23 @@ class ImageInfo:
     modified: float = 0.0
     error: str = ""
     extra: dict = field(default_factory=dict)
+    root: str = ""  # the image folder the scan started from, when found by a scan
 
     @property
     def name(self) -> str:
         return Path(self.path).name
+
+    @property
+    def folder(self) -> str:
+        """The image's folder relative to the scanned root (empty at the root itself)."""
+        parent = Path(self.path).parent
+        if self.root:
+            try:
+                rel = parent.relative_to(self.root)
+                return "" if str(rel) == "." else str(rel)
+            except ValueError:
+                pass
+        return str(parent)
 
     @property
     def format_label(self) -> str:
@@ -82,19 +95,33 @@ def inspect(path: str | Path) -> ImageInfo:
     return info
 
 
-def scan(directories: list[str], *, include_clones: bool = False, max_depth: int = 3) -> list[ImageInfo]:
-    """Images under the given directories (a few levels deep), newest first."""
+SKIP_DIR_NAMES = {"$RECYCLE.BIN", "System Volume Information", "lost+found", "node_modules", ".git"}
+
+
+def scan(directories: list[str], *, include_clones: bool = False, max_depth: int = 0, max_dirs: int = 20000) -> list[ImageInfo]:
+    """Images anywhere under the given directories, newest first.
+
+    ``max_depth`` 0 means no limit; the walk stops after ``max_dirs`` folders
+    so a mistaken root (say, the whole home directory) cannot run away. Hidden
+    folders, recycle bins and symlinked directories are skipped.
+    """
     seen: set[str] = set()
     found: list[ImageInfo] = []
+    visited = 0
     for directory in directories:
         root = Path(directory).expanduser()
         if not root.is_dir():
             continue
         base_depth = len(root.parts)
-        for dirpath, dirnames, filenames in os.walk(root):
-            if len(Path(dirpath).parts) - base_depth >= max_depth:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            visited += 1
+            if visited > max_dirs:
                 dirnames[:] = []
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                break
+            depth = len(Path(dirpath).parts) - base_depth
+            if max_depth and depth >= max_depth:
+                dirnames[:] = []
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIR_NAMES)
             for filename in filenames:
                 if Path(filename).suffix.lower() not in IMAGE_SUFFIXES:
                     continue
@@ -104,6 +131,7 @@ def scan(directories: list[str], *, include_clones: bool = False, max_depth: int
                     continue
                 seen.add(real)
                 info = inspect(full)
+                info.root = str(root)
                 if info.is_clone and not include_clones:
                     continue
                 found.append(info)

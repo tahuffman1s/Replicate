@@ -102,3 +102,22 @@ def test_inspect_scan_and_clone_real_vhdx(tmp_path):
     assert any(i.is_clone for i in scan([str(clones)], include_clones=True))
     delete_clone(clone)
     assert list_clones(clones) == []
+
+
+@pytest.mark.skipif(qemu_img is None, reason="qemu-img not installed")
+def test_scan_finds_nested_images_and_reports_their_folder(tmp_path):
+    root = tmp_path / "share"
+    deep = root / "Images" / "Sales" / "2026-10-20" / "nightly"
+    deep.mkdir(parents=True)
+    subprocess.run([qemu_img, "create", "-q", "-f", "vhdx", str(deep / "Sales.vhdx"), "16M"], check=True)
+    hidden = root / ".cache"
+    hidden.mkdir()
+    subprocess.run([qemu_img, "create", "-q", "-f", "vhdx", str(hidden / "Hidden.vhdx"), "16M"], check=True)
+    (root / "$RECYCLE.BIN").mkdir()
+    subprocess.run([qemu_img, "create", "-q", "-f", "vhdx", str(root / "$RECYCLE.BIN" / "Old.vhdx"), "16M"], check=True)
+    found = scan([str(root)])
+    assert [i.name for i in found] == ["Sales.vhdx"]
+    assert found[0].folder == "Images/Sales/2026-10-20/nightly"
+    assert found[0].root == str(root)
+    assert scan([str(root)], max_depth=2) == []
+    assert [i.name for i in scan([str(root)], max_depth=5)] == ["Sales.vhdx"]

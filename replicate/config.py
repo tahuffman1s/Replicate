@@ -136,6 +136,7 @@ class SqlServer:
 @dataclass
 class VhdSettings:
     image_dirs: list[str] = field(default_factory=list)
+    scan_depth: int = 0  # folder levels to look into under each image folder; 0 means all of them
     clones_dir: str = str(paths.CLONES_DIR)
     # Where restored databases' files go in the guest when restoring from .bak.
     # Empty: the instance's default data directory. "clone": onto the clone disk.

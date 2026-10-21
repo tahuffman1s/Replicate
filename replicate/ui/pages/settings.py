@@ -56,6 +56,7 @@ class SettingsPage(Adw.PreferencesPage):
         g = Adw.PreferencesGroup(title="Images and clones")
         self._folder_row(g, "Clones directory", ctx.config.vhd.clones_dir, self._set_clones_dir,
                          "qcow2 overlays live here; the libvirt qemu user must be able to reach it")
+        self._spin(g, "Folders deep to look for images (0: all)", ctx.config.vhd.scan_depth, 0, 32, 1, lambda v: setattr(ctx.config.vhd, "scan_depth", int(v)))
         combo = Adw.ComboRow(title="Restore .bak files onto", subtitle="Default for the restore dialog")
         combo.set_model(Gtk.StringList.new(["The instance's default directories", "The clone disk itself"]))
         combo.set_selected(1 if ctx.config.vhd.restore_target == "clone" else 0)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import gi
 
@@ -52,7 +53,7 @@ class ImagesPage(Gtk.ScrolledWindow):
 
         # Folders
         self.folders_group = Adw.PreferencesGroup(title="Image folders")
-        self.folders_group.set_description("Where Replicate looks for .vhd, .vhdx, .qcow2 and raw images.")
+        self.folders_group.set_description("Where Replicate looks for .vhd, .vhdx, .qcow2 and raw images, in every folder underneath.")
         add_folder = text_button("Add folder", self._on_add_folder)
         self.folders_group.set_header_suffix(add_folder)
         box.append(self.folders_group)
@@ -162,7 +163,7 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.rescan_button.set_sensitive(True)
             self.ctx.toast(f"Scan failed: {exc}")
 
-        run_in_thread(scan, dirs, on_done=done, on_error=failed, name="scan")
+        run_in_thread(scan, dirs, max_depth=self.ctx.config.vhd.scan_depth, on_done=done, on_error=failed, name="scan")
 
     def _render_images(self) -> None:
         for row in self.image_rows:
@@ -176,10 +177,13 @@ class ImagesPage(Gtk.ScrolledWindow):
         attached_images = {m.image_path for m in self.ctx.mounter.mounts() + self.ctx.docker_mounter.mounts()}
         for img in self.images:
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(img.modified)) if img.modified else ""
-            subtitle = f"{img.format_label} · {human_size(img.virtual_size)} virtual · {human_size(img.actual_size)} on disk · {when}\n{img.path}"
+            where = f"{img.folder}/" if img.folder else ""
+            subtitle = f"{where}{img.name} · {img.format_label} · {human_size(img.virtual_size)} virtual · {human_size(img.actual_size)} on disk · {when}"
             if img.error:
                 subtitle = f"{img.error}\n{img.path}"
-            row = Adw.ActionRow(use_markup=False, title=img.name, subtitle=subtitle)
+            title = f"{Path(img.folder).name} / {img.name}" if img.folder else img.name
+            row = Adw.ActionRow(use_markup=False, title=title, subtitle=subtitle)
+            row.set_tooltip_text(img.path)
             row.set_subtitle_lines(2)
             row.add_prefix(Gtk.Image.new_from_icon_name("drive-harddisk-symbolic"))
             if img.is_differencing:

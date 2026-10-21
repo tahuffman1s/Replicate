@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.3" date="2026-10-21">
+      <description>
+        <p>Image folders are searched all the way down, so images nested in subfolders are found; the list shows each image's folder.</p>
+      </description>
+    </release>
     <release version="0.2.2" date="2026-10-21">
       <description>
         <p>Creating a container and attaching an image start their background work again; both stalled at the first step. Dialog actions now show an error instead of staying busy when something goes wrong.</p>
