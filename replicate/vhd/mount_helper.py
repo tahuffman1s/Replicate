@@ -199,6 +199,14 @@ def do_umount(args: list[str], quiet: bool = False) -> None:
 SHARES_ROOT = "/run/replicate/shares"
 
 
+def is_mountpoint(target: Path) -> bool:
+    try:
+        with open("/proc/mounts", encoding="utf-8") as fh:
+            return any(len(f := line.split()) > 1 and f[1].replace("\\040", " ") == str(target) for line in fh)
+    except OSError:
+        return False
+
+
 def do_mount_share(args: list[str]) -> None:
     """mount -t cifs UNC TARGET -o OPTS[,credentials=FILE]; credentials come on stdin as JSON."""
     unc, target = args[0], Path(args[1])
@@ -217,6 +225,9 @@ def do_mount_share(args: list[str]) -> None:
         fail(f"Shares are mounted under {SHARES_ROOT} only")
     if any(ch in options for ch in " \n\t") or "credentials=" in options:
         fail("Unexpected mount options")
+    if is_mountpoint(target):
+        print(json.dumps({"ok": True, "target": str(target), "already": True}))
+        return
     if not shutil.which("mount.cifs"):
         fail("mount.cifs is not installed (package cifs-utils)")
     target.mkdir(parents=True, exist_ok=True)
@@ -254,6 +265,13 @@ def do_umount_share(args: list[str]) -> None:
     target = Path(args[0])
     if not str(target).startswith(SHARES_ROOT + "/") or ".." in target.parts:
         fail(f"Shares are mounted under {SHARES_ROOT} only")
+    if not is_mountpoint(target):
+        try:
+            target.rmdir()
+        except OSError:
+            pass
+        print(json.dumps({"ok": True, "target": str(target), "already": True}))
+        return
     proc = sh("umount", str(target), check=False, timeout=60)
     if proc.returncode != 0:
         proc = sh("umount", "-l", str(target), check=False, timeout=60)

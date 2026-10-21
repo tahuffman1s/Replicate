@@ -258,6 +258,16 @@ host (`mount.cifs`, and `cifs.upcall` with `keyutils` for Kerberos); on
 Fedora and Rocky also `setsebool -P virt_use_samba on` so the VM may read
 the share.
 
+A share that is mounted already is used as it is. Replicate looks in
+`/proc/mounts` for a CIFS mount of the same server and share: its own
+(remounted if it stopped answering), one it made for another entry, or one
+the system made through fstab or a systemd automount (a first access brings
+an automount up). A system mount whose `file_mode`/`dir_mode` let only the
+owner read, as per-user fstab entries often do, is left alone and the share
+is mounted a second time under `/run/replicate/shares` for QEMU and the
+containers; CIFS is fine with that. Only Replicate's own mounts are ever
+unmounted by it.
+
 **With Cortex.** [Cortex](https://github.com/tahuffman1s/cortex) is a
 network drive manager for the same desktops: it finds the shares on your
 file servers, keeps the ones you use as drives and holds one sign-in for all

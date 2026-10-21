@@ -76,7 +76,11 @@ class ShareDialog(Adw.Dialog):
         where.add(self.label)
         self.readonly = Adw.SwitchRow(use_markup=False, title="Read-only", subtitle="Images are only read; clones are written locally", active=self.share.readonly)
         where.add(self.readonly)
+        self.existing_row = Adw.ActionRow(use_markup=False, title="Already mounted", subtitle="", visible=False)
+        self.existing_row.add_prefix(Gtk.Image.new_from_icon_name("emblem-ok-symbolic"))
+        where.add(self.existing_row)
         page.add(where)
+        self.url.connect("changed", lambda *_: self._check_existing())
 
         auth = Adw.PreferencesGroup(title="Access")
         self.auth = Adw.ComboRow(title="Sign in with")
@@ -110,6 +114,34 @@ class ShareDialog(Adw.Dialog):
             warn.add(Adw.ActionRow(use_markup=False, title="This computer cannot mount shares yet", subtitle="; ".join(problems), icon_name="dialog-warning-symbolic"))
             page.add(warn)
         self._sync()
+        self._check_existing()
+
+    def _check_existing(self) -> None:
+        """Say so when the share is mounted already (by the system, or by Replicate for another entry)."""
+        try:
+            probe = Share(id=self.share.id, url=sh.parse_share_url(self.url.get_text()).url)
+        except sh.ShareError:
+            self.existing_row.set_visible(False)
+            return
+        existing = sh.find_mount(probe)
+        if existing is None:
+            for entry in sh.fstab_mounts():
+                if sh._unc_key(entry.source) == sh._unc_key(sh.parse_share_url(probe.url).unc):
+                    self.existing_row.set_subtitle(f"The system mounts this share at {entry.mountpoint} (fstab); Replicate uses that mount when its files are readable by other users")
+                    self.existing_row.set_visible(True)
+                    return
+            self.existing_row.set_visible(False)
+            return
+        if existing.mountpoint == sh.mountpoint_for(probe):
+            text = "By Replicate, for this entry; Mount checks it still answers"
+        elif existing.ours:
+            text = "By Replicate, for another entry of the same share; that mount is used"
+        elif existing.readable_by_others:
+            text = f"By the system at {existing.mountpoint}; that mount is used, nothing else is mounted"
+        else:
+            text = f"By the system at {existing.mountpoint}, with modes only you can read; Replicate mounts it again for the VM and containers"
+        self.existing_row.set_subtitle(text)
+        self.existing_row.set_visible(True)
 
     def _mode(self) -> str:
         return self.auths[self.auth.get_selected()]

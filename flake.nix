@@ -13,7 +13,7 @@
       packages = forAll (pkgs: rec {
         replicate = pkgs.python3Packages.buildPythonApplication {
           pname = "replicate";
-          version = "0.4.0";
+          version = "0.4.1";
           pyproject = true;
           src = ./.;
 

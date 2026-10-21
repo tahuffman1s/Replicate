@@ -132,15 +132,21 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.folders_group.add(row)
             self.folder_rows.append(row)
         for share in shares:
-            mounted = sh.is_mounted(share)
-            row = Adw.ActionRow(use_markup=False, title=sh.display_name(share), subtitle=f"{share.url} · {share.auth} · {'mounted' if mounted else 'not mounted'}")
+            existing = sh.find_mount(share)
+            row = Adw.ActionRow(use_markup=False, title=sh.display_name(share), subtitle=f"{share.url} · {share.auth} · {existing.describe(share) if existing else 'not mounted'}")
+            row.set_subtitle_lines(2)
             row.add_prefix(Gtk.Image.new_from_icon_name("network-server-symbolic"))
             row.set_activatable(True)
             row.connect("activated", lambda _r, share=share: ShareDialog(self.ctx, share, on_mounted=lambda _s: self.rescan()).present(self.get_root()))
-            if mounted:
-                row.add_suffix(text_button("Unmount", lambda share=share: self._unmount_share(share)))
-            else:
+            if existing is None:
                 row.add_suffix(text_button("Mount", lambda share=share: self._mount_share(share), css="suggested-action"))
+            elif existing.mountpoint == sh.mountpoint_for(share):
+                row.add_suffix(text_button("Unmount", lambda share=share: self._unmount_share(share)))
+            elif not existing.ours and not existing.readable_by_others:
+                # the system's mount serves only the owner; a Replicate mount serves QEMU and containers too
+                row.add_suffix(text_button("Mount for the VM", lambda share=share: self._mount_share(share), css="suggested-action"))
+            else:
+                row.add_suffix(status_label("in use", "good"))
             row.add_suffix(icon_button("user-trash-symbolic", "Forget this share", lambda share=share: self._forget_share(share), css="flat"))
             self.folders_group.add(row)
             self.folder_rows.append(row)

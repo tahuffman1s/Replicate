@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.4.1" date="2026-10-21">
+      <description>
+        <p>A share that is mounted already is used as it is: Replicate's own mount (remounted when it stops answering), one made for another entry of the same share, or a system mount from fstab or a systemd automount. A system mount only its owner can read is mounted again for the VM and containers. Mounting twice no longer fails, and only Replicate's own mounts are unmounted by it.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-21">
       <description>
         <p>Works with Cortex, the network drive manager. The drives Cortex keeps are offered when adding a share, a share can sign in with the account Cortex keeps (its password is read from the keyring entry Cortex stored, so it is typed once), and images on a drive Cortex has connected are found right away and marked "via Cortex", with attaching leading to a Replicate mount of the share. Settings gains a Network drives section that says what Cortex holds and opens it.</p>

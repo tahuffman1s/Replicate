@@ -12,6 +12,8 @@ folder inside it as an image folder.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,8 @@ from urllib.parse import unquote, urlparse
 
 from replicate.config import Share
 from replicate.util import which
+
+log = logging.getLogger(__name__)
 
 SHARES_ROOT = "/run/replicate/shares"
 
@@ -78,9 +82,125 @@ def mountpoint_for(share: Share) -> str:
     return f"{SHARES_ROOT}/{share.id}"
 
 
-def folder_path(share: Share) -> str:
+def _unescape(field: str) -> str:
+    return field.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
+
+
+def _unc_key(source: str) -> str:
+    """//Server/Share/, \\\\server\\share -> 'server/share' (what two mounts of one share have in common)."""
+    parts = [p for p in source.strip().replace("\\", "/").split("/") if p]
+    return "/".join(parts[:2]).lower()
+
+
+@dataclass
+class ExistingMount:
+    """A CIFS mount of a share that is already there: Replicate's own, another
+    Replicate share's, or one the system made (fstab, systemd, an admin)."""
+
+    mountpoint: str
+    source: str
+    fstype: str = "cifs"
+    options: str = ""
+
+    @property
+    def ours(self) -> bool:
+        return self.mountpoint.startswith(SHARES_ROOT + "/")
+
+    def option(self, name: str) -> str | None:
+        for opt in self.options.split(","):
+            key, _, value = opt.partition("=")
+            if key == name:
+                return value
+        return None
+
+    @property
+    def readable_by_others(self) -> bool:
+        """Can QEMU and containers (other users) read files on it? CIFS applies
+        file_mode/dir_mode on the client unless noperm is set; both default to 0755."""
+        if self.option("noperm") is not None:
+            return True
+        try:
+            file_mode = int(self.option("file_mode") or "0755", 8)
+            dir_mode = int(self.option("dir_mode") or "0755", 8)
+        except ValueError:
+            return False
+        return bool(file_mode & 0o004) and (dir_mode & 0o005) == 0o005
+
+    @property
+    def readonly(self) -> bool:
+        return self.options.split(",")[0] == "ro" or ",ro," in f",{self.options},"
+
+    def describe(self, share: Share) -> str:
+        if self.mountpoint == mountpoint_for(share):
+            return "mounted"
+        if self.ours:
+            return "mounted (shared with another entry for this share)"
+        text = f"mounted by the system at {self.mountpoint}"
+        if not self.readable_by_others:
+            text += " with modes only you can read; mount it here for the VM and containers"
+        return text
+
+
+def _parse_mounts(text: str) -> list[ExistingMount]:
+    out = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        source, mountpoint, fstype, options = _unescape(fields[0]), _unescape(fields[1]), fields[2], fields[3]
+        if fstype in ("cifs", "smb3") and source.startswith(("//", "\\\\")):
+            out.append(ExistingMount(mountpoint, source, fstype, options))
+    return out
+
+
+def current_mounts() -> list[ExistingMount]:
+    try:
+        with open("/proc/mounts", encoding="utf-8") as fh:
+            return _parse_mounts(fh.read())
+    except OSError:
+        return []
+
+
+def _parse_fstab(text: str) -> list[ExistingMount]:
+    """CIFS entries in fstab: shares the system mounts itself, on demand with
+    x-systemd.automount (a first access brings them up)."""
+    out = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        fields = line.split()
+        if len(fields) >= 3 and fields[2] == "cifs" and fields[0].startswith(("//", "\\\\")):
+            out.append(ExistingMount(_unescape(fields[1]), _unescape(fields[0]), "cifs", fields[3] if len(fields) > 3 else ""))
+    return out
+
+
+def fstab_mounts() -> list[ExistingMount]:
+    try:
+        return _parse_fstab(Path("/etc/fstab").read_text(encoding="utf-8"))
+    except OSError:
+        return []
+
+
+def find_mount(share: Share, mounts: list[ExistingMount] | None = None) -> ExistingMount | None:
+    """Where the share is mounted right now, if anywhere: Replicate's own
+    mount for it first, then another Replicate entry's mount of the same
+    share, then a mount the system made."""
+    try:
+        key = _unc_key(parse_share_url(share.url).unc)
+    except ShareError:
+        return None
+    mounts = current_mounts() if mounts is None else mounts
+    own = mountpoint_for(share)
+    for m in mounts:
+        if m.mountpoint == own:
+            return m
+    same = [m for m in mounts if _unc_key(m.source) == key]
+    return next((m for m in same if m.ours), same[0] if same else None)
+
+
+def folder_path(share: Share, mount: ExistingMount | None = None) -> str:
+    """The image folder: the subpath inside whichever mount of the share is in use."""
     parts = parse_share_url(share.url)
-    base = mountpoint_for(share)
+    base = mount.mountpoint if mount is not None else (find_mount(share) or ExistingMount(mountpoint_for(share), parts.unc)).mountpoint
     return f"{base}/{parts.subpath}" if parts.subpath else base
 
 
@@ -92,16 +212,29 @@ def display_name(share: Share) -> str:
 
 
 def is_mounted(share: Share) -> bool:
-    target = mountpoint_for(share)
+    return find_mount(share) is not None
+
+
+def mount_status(share: Share) -> str:
+    mount = find_mount(share)
+    return mount.describe(share) if mount else "not mounted"
+
+
+def can_unmount(share: Share) -> bool:
+    """Only Replicate's own mount for this entry is Replicate's to unmount."""
+    mount = find_mount(share)
+    return mount is not None and mount.mountpoint == mountpoint_for(share)
+
+
+def reachable(path: str) -> str | None:
+    """None when the folder answers, else why not (a stale mount, the server gone, a missing subfolder)."""
     try:
-        with open("/proc/mounts", encoding="utf-8") as fh:
-            for line in fh:
-                fields = line.split()
-                if len(fields) >= 2 and fields[1].replace("\\040", " ") == target:
-                    return True
-    except OSError:
-        pass
-    return False
+        os.listdir(path)
+        return None
+    except FileNotFoundError:
+        return f"{path} does not exist"
+    except OSError as exc:
+        return exc.strerror or str(exc)
 
 
 def mount_options(share: Share, *, uid: int, gid: int) -> str:
@@ -156,15 +289,49 @@ def credentials_for(share: Share, password: str | None) -> dict[str, str] | None
 
 
 def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> str:
-    """Mount the share through the root helper; returns the image folder inside it."""
+    """Make the share's image folder available and return it.
+
+    A mount that is already there is used when it will do: Replicate's own
+    (remounted if it went stale), another Replicate entry's mount of the
+    same share, or a system mount (fstab, systemd automount, an admin's)
+    whose files other users can read. A system mount with modes only the
+    owner can read is left alone and Replicate mounts the share again, for
+    QEMU and containers, under its own mount point. Mounting the same share
+    twice is fine for CIFS.
+    """
     from replicate.vhd import nbd
 
-    if not which("mount.cifs"):
-        raise ShareError("mount.cifs is not installed; install cifs-utils")
     parts = parse_share_url(share.url)
     target = mountpoint_for(share)
-    if is_mounted(share):
-        return folder_path(share)
+    existing = find_mount(share)
+    if existing is None:
+        for entry in fstab_mounts():
+            if _unc_key(entry.source) == _unc_key(parts.unc):
+                reachable(entry.mountpoint)  # a first access brings an automount up
+                existing = find_mount(share)
+                break
+    if existing is not None:
+        folder = folder_path(share, existing)
+        problem = reachable(folder)
+        if existing.mountpoint == target:
+            if problem is None:
+                return folder
+            log.info("own mount of %s is not answering (%s); mounting it again", share.url, problem)
+            try:
+                nbd._privileged(["umount-share", target])
+            except nbd.HostMountError as exc:
+                raise ShareError(f"The share's mount stopped answering ({problem}) and could not be unmounted: {exc}") from exc
+        elif problem is None and existing.readable_by_others:
+            return folder
+        elif problem is None:
+            log.info("%s is mounted at %s with modes other users cannot read; mounting it for them too", share.url, existing.mountpoint)
+        elif existing.ours:
+            log.info("another entry's mount of %s is not answering (%s); mounting our own", share.url, problem)
+        else:
+            raise ShareError(f"The share is mounted by the system at {existing.mountpoint}, but that mount is not answering: {problem}. "
+                             "Is the network or VPN up? Unmount it there and try again.")
+    if not which("mount.cifs"):
+        raise ShareError("mount.cifs is not installed; install cifs-utils")
     args = ["mount-share", parts.unc, target, "--options", mount_options(share, uid=uid, gid=gid)]
     stdin = None
     credentials = credentials_for(share, password)
@@ -175,16 +342,18 @@ def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> st
         nbd._privileged(args, input_data=stdin)
     except nbd.HostMountError as exc:
         raise ShareError(_explain(str(exc), share)) from exc
-    folder = folder_path(share)
+    folder = f"{target}/{parts.subpath}" if parts.subpath else target
     if not Path(folder).is_dir():
         raise ShareError(f"The share mounted, but it has no folder {parts.subpath or '/'}")
     return folder
 
 
 def unmount_share(share: Share) -> None:
+    """Unmount Replicate's own mount for this entry. A system mount, or another
+    entry's, is left where it is."""
     from replicate.vhd import nbd
 
-    if not is_mounted(share):
+    if not can_unmount(share):
         return
     try:
         nbd._privileged(["umount-share", mountpoint_for(share)])
