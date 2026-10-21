@@ -45,13 +45,14 @@ def sniff_format(path: str | Path, size: int | None = None) -> str | None:
             return None
         with open(path, "rb") as fh:
             head = fh.read(1024)
-            fh.seek(-512, os.SEEK_END)
-            tail = fh.read(512)
+            fh.seek(-min(1024, size), os.SEEK_END)
+            tail = fh.read(1024)
     except OSError:
         return None
     if head.startswith(b"vhdxfile"):
         return "vhdx"
-    if head.startswith(b"conectix") or tail.startswith(b"conectix"):
+    # The VHD footer is the last 512 bytes, or 511 on disks from old Virtual PC versions.
+    if head.startswith(b"conectix") or b"conectix" in tail[-520:]:
         return "vpc"
     if head.startswith(b"QFI\xfb"):
         return "qcow2"
@@ -147,45 +148,100 @@ def inspect(path: str | Path) -> ImageInfo:
 SKIP_DIR_NAMES = {"$RECYCLE.BIN", "System Volume Information", "lost+found", "node_modules", ".git"}
 
 
-def scan(directories: list[str], *, include_clones: bool = False, max_depth: int = 0, max_dirs: int = 20000) -> list[ImageInfo]:
+@dataclass
+class ScanReport:
+    """What a scan went through, for the page's status line and for --scan."""
+
+    folders: int = 0
+    files: int = 0
+    looked_inside: int = 0
+    unreadable: int = 0
+    missing_roots: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+    decisions: list[tuple[str, str]] = field(default_factory=list)  # (path, why) when verbose
+
+    def describe(self, found: int) -> str:
+        parts = [f"{found} image{'s' if found != 1 else ''}", f"{self.folders:,} folder{'s' if self.folders != 1 else ''}", f"{self.files:,} files"]
+        if self.unreadable:
+            parts.append(f"{self.unreadable} could not be read")
+        if self.missing_roots:
+            parts.append("missing: " + ", ".join(self.missing_roots))
+        return " · ".join(parts) + f" · {self.seconds:.1f} s"
+
+
+def scan(directories: list[str], *, include_clones: bool = False, max_depth: int = 0, max_dirs: int = 2_000_000,
+         report: ScanReport | None = None, verbose: bool = False, progress=None) -> list[ImageInfo]:
     """Images anywhere under the given directories, newest first.
 
-    ``max_depth`` 0 means no limit; the walk stops after ``max_dirs`` folders
-    so a mistaken root (say, the whole home directory) cannot run away. Hidden
-    folders, recycle bins and symlinked directories are skipped.
+    Files with an image extension are taken as such; every other file whose
+    name does not rule it out is opened and its signature checked. ``max_depth``
+    0 means no limit. Hidden folders, recycle bins and symlinked directories
+    are skipped. ``progress(folders, found)`` is called now and then.
     """
+    import time
+
+    started = time.monotonic()
+    report = report if report is not None else ScanReport()
     seen: set[str] = set()
     found: list[ImageInfo] = []
-    visited = 0
+
+    def note(path: str, why: str) -> None:
+        if verbose:
+            report.decisions.append((path, why))
+
     for directory in directories:
         root = Path(directory).expanduser()
         if not root.is_dir():
+            report.missing_roots.append(str(root))
             continue
         base_depth = len(root.parts)
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-            visited += 1
-            if visited > max_dirs:
+            report.folders += 1
+            if report.folders > max_dirs:
                 dirnames[:] = []
                 break
+            if progress and report.folders % 200 == 0:
+                progress(report.folders, len(found))
             depth = len(Path(dirpath).parts) - base_depth
             if max_depth and depth >= max_depth:
                 dirnames[:] = []
             dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIR_NAMES)
             for filename in filenames:
+                report.files += 1
                 suffix = Path(filename).suffix.lower()
                 full = str(Path(dirpath) / filename)
                 detected = None
                 if suffix not in IMAGE_SUFFIXES:
-                    # No image extension (or none at all): look inside, unless the name says it cannot be one.
-                    if suffix in NOT_IMAGE_SUFFIXES or filename.startswith("."):
+                    if filename.startswith("."):
+                        note(full, "hidden file")
+                        continue
+                    if suffix in NOT_IMAGE_SUFFIXES:
+                        note(full, f"{suffix} is never an image")
                         continue
                     try:
                         size = os.stat(full).st_size
-                    except OSError:
+                    except OSError as exc:
+                        report.unreadable += 1
+                        note(full, f"cannot stat: {exc.strerror}")
+                        continue
+                    if size < SNIFF_MIN_SIZE:
+                        note(full, f"too small ({size} bytes)")
+                        continue
+                    report.looked_inside += 1
+                    try:
+                        with open(full, "rb"):
+                            pass
+                    except OSError as exc:
+                        report.unreadable += 1
+                        note(full, f"cannot read: {exc.strerror}")
                         continue
                     detected = sniff_format(full, size)
                     if detected is None:
+                        note(full, "no disk image signature")
                         continue
+                    note(full, f"{detected} by signature")
+                else:
+                    note(full, f"{suffix} extension")
                 real = os.path.realpath(full)
                 if real in seen:
                     continue
@@ -195,7 +251,11 @@ def scan(directories: list[str], *, include_clones: bool = False, max_depth: int
                 if detected and info.format in ("raw", "unknown") and detected != "raw":
                     info.format = detected
                 if info.is_clone and not include_clones:
+                    note(full, "a clone (hidden from the image list)")
                     continue
                 found.append(info)
     found.sort(key=lambda i: i.modified, reverse=True)
+    report.seconds = time.monotonic() - started
+    if progress:
+        progress(report.folders, len(found))
     return found

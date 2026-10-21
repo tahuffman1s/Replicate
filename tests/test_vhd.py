@@ -142,3 +142,20 @@ def test_scan_detects_images_without_an_extension(tmp_path):
     (root / "tiny").write_bytes(b"vhdxfile")
     assert sniff_format(root / "tiny") is None
     assert (root / "legacy-no-ext").stat().st_size < 4096  # a fresh dynamic VHD really is this small
+
+
+def test_sniff_accepts_a_511_byte_vhd_footer(tmp_path):
+    from replicate.vhd.images import ScanReport, scan, sniff_format
+
+    old = tmp_path / "OldVirtualPC"
+    data = bytearray(4096)
+    footer = b"conectix" + b"\0" * 503  # 511 bytes, as Virtual PC 2004 wrote it
+    data[-511:] = footer
+    old.write_bytes(bytes(data))
+    assert sniff_format(old) == "vpc"
+    report = ScanReport()
+    found = scan([str(tmp_path), str(tmp_path / "missing")], report=report, verbose=True)
+    assert [i.name for i in found] == ["OldVirtualPC"]
+    assert report.files == 1 and report.looked_inside == 1 and report.missing_roots == [str(tmp_path / "missing")]
+    assert any("by signature" in why for _, why in report.decisions)
+    assert "1 image" in report.describe(1)

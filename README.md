@@ -242,6 +242,21 @@ instance, 14331, 14332, … for named ones), creates the `replicate` login as
 sysadmin, and opens the firewall. Progress goes to
 `C:\ProgramData\Replicate\setup-state.json`, which the host reads.
 
+### When an image does not show up
+
+The Images page says what the last scan went through (folders, files, how
+many could not be read). From a terminal, the same scan explains itself per
+file:
+
+```sh
+./Replicate-*.AppImage --scan /path/to/the/folder --all
+```
+
+Each image is listed with its format; with `--all` every skipped file is
+listed with the reason (not readable as your user, too small, a name that
+rules it out, no disk image signature). Files on a share mounted without
+`uid=`/`file_mode=` options are a common cause of "cannot read".
+
 ## Development
 
 ```sh

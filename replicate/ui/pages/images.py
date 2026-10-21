@@ -18,7 +18,7 @@ from replicate.ui.dialogs.restore import AttachDialog, RestoreDialog, detach_mou
 from replicate.ui.widgets.common import confirm, file_chooser, icon_button, status_label, status_page, text_button  # noqa: E402
 from replicate.util import human_size  # noqa: E402
 from replicate.vhd import clones as cl  # noqa: E402
-from replicate.vhd.images import ImageInfo, scan  # noqa: E402
+from replicate.vhd.images import ImageInfo, ScanReport, scan  # noqa: E402
 
 
 class ImagesPage(Gtk.ScrolledWindow):
@@ -148,11 +148,20 @@ class ImagesPage(Gtk.ScrolledWindow):
         self._rescan_pending = False
         self.rescan_button.set_sensitive(False)
         dirs = list(self.ctx.config.vhd.image_dirs)
+        report = ScanReport()
+        if dirs:
+            self.images_group.set_description("Scanning…")
+
+        def on_progress(folders: int, found: int) -> None:
+            from replicate.tasks import on_main
+
+            on_main(self.images_group.set_description, f"Scanning… {folders:,} folders, {found} image{'s' if found != 1 else ''} so far")
 
         def done(images: list[ImageInfo]) -> None:
             self._scanning = False
             self.rescan_button.set_sensitive(True)
             self.images = images
+            self.images_group.set_description(report.describe(len(images)) if dirs else "")
             self._render_images()
             self.refresh_clones()
             if getattr(self, "_rescan_pending", False):
@@ -163,7 +172,7 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.rescan_button.set_sensitive(True)
             self.ctx.toast(f"Scan failed: {exc}")
 
-        run_in_thread(scan, dirs, max_depth=self.ctx.config.vhd.scan_depth, on_done=done, on_error=failed, name="scan")
+        run_in_thread(scan, dirs, max_depth=self.ctx.config.vhd.scan_depth, report=report, progress=on_progress, on_done=done, on_error=failed, name="scan")
 
     def _render_images(self) -> None:
         for row in self.image_rows:
