@@ -3,6 +3,8 @@
 
     mount_helper.py mount IMAGE TARGET_DIR [--format qcow2] [--uid N] [--gid N] [--readonly]
     mount_helper.py umount TARGET_DIR
+    mount_helper.py mount-share //SERVER/SHARE TARGET_DIR --options OPTS [--credentials-stdin]
+    mount_helper.py umount-share TARGET_DIR
 
 ``mount`` attaches IMAGE to a free /dev/nbdN with qemu-nbd, waits for its
 partitions, mounts each filesystem it understands under TARGET_DIR/p<N> (NTFS
@@ -194,6 +196,76 @@ def do_umount(args: list[str], quiet: bool = False) -> None:
         print(json.dumps({"ok": True, "device": info["device"]}))
 
 
+SHARES_ROOT = "/run/replicate/shares"
+
+
+def do_mount_share(args: list[str]) -> None:
+    """mount -t cifs UNC TARGET -o OPTS[,credentials=FILE]; credentials come on stdin as JSON."""
+    unc, target = args[0], Path(args[1])
+    options = ""
+    creds_stdin = False
+    rest = args[2:]
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--options":
+            options = rest.pop(0)
+        elif flag == "--credentials-stdin":
+            creds_stdin = True
+    if not unc.startswith("//") or unc.count("/") < 3:
+        fail(f"{unc} is not //server/share")
+    if not str(target).startswith(SHARES_ROOT + "/") or ".." in target.parts:
+        fail(f"Shares are mounted under {SHARES_ROOT} only")
+    if any(ch in options for ch in " \n\t") or "credentials=" in options:
+        fail("Unexpected mount options")
+    if not shutil.which("mount.cifs"):
+        fail("mount.cifs is not installed (package cifs-utils)")
+    target.mkdir(parents=True, exist_ok=True)
+    os.chmod(SHARES_ROOT, 0o755)
+    creds_file = None
+    try:
+        if creds_stdin:
+            data = json.loads(sys.stdin.read() or "{}")
+            creds_file = Path(f"/run/replicate/creds-{target.name}")
+            creds_file.parent.mkdir(parents=True, exist_ok=True)
+            lines = [f"username={data.get('username', '')}", f"password={data.get('password', '')}"]
+            if data.get("domain"):
+                lines.append(f"domain={data['domain']}")
+            fd = os.open(creds_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+            options = f"{options},credentials={creds_file}" if options else f"credentials={creds_file}"
+        proc = sh("mount", "-t", "cifs", unc, str(target), "-o", options, check=False, timeout=120)
+        if proc.returncode != 0:
+            try:
+                target.rmdir()
+            except OSError:
+                pass
+            fail((proc.stderr or proc.stdout).strip() or f"mount exited with {proc.returncode}")
+    finally:
+        if creds_file is not None:
+            try:
+                creds_file.unlink()
+            except OSError:
+                pass
+    print(json.dumps({"ok": True, "target": str(target)}))
+
+
+def do_umount_share(args: list[str]) -> None:
+    target = Path(args[0])
+    if not str(target).startswith(SHARES_ROOT + "/") or ".." in target.parts:
+        fail(f"Shares are mounted under {SHARES_ROOT} only")
+    proc = sh("umount", str(target), check=False, timeout=60)
+    if proc.returncode != 0:
+        proc = sh("umount", "-l", str(target), check=False, timeout=60)
+    if proc.returncode != 0:
+        fail(proc.stderr.strip() or "umount failed")
+    try:
+        target.rmdir()
+    except OSError:
+        pass
+    print(json.dumps({"ok": True, "target": str(target)}))
+
+
 def main(argv: list[str]) -> int:
     if os.geteuid() != 0:
         fail("must run as root (Replicate uses pkexec)")
@@ -201,6 +273,10 @@ def main(argv: list[str]) -> int:
         do_mount(argv[1:])
     elif len(argv) == 2 and argv[0] == "umount":
         do_umount(argv[1:])
+    elif len(argv) >= 3 and argv[0] == "mount-share":
+        do_mount_share(argv[1:])
+    elif len(argv) == 2 and argv[0] == "umount-share":
+        do_umount_share(argv[1:])
     else:
         fail(__doc__ or "usage error", 2)
     return 0

@@ -134,8 +134,27 @@ class SqlServer:
 
 
 @dataclass
+class Share:
+    """A network share Replicate mounts itself (kernel CIFS), so its images are
+    readable by QEMU and the root mount helper, not just by the desktop."""
+
+    id: str = field(default_factory=new_id)
+    url: str = ""  # smb://server/share/sub/folder
+    auth: str = "kerberos"  # kerberos (this computer's ticket), password, or guest
+    domain: str = ""
+    username: str = ""
+    readonly: bool = True
+    label: str = ""
+
+    @property
+    def secret_key(self) -> str:
+        return f"share:{self.id}"
+
+
+@dataclass
 class VhdSettings:
     image_dirs: list[str] = field(default_factory=list)
+    shares: list[Share] = field(default_factory=list)
     scan_depth: int = 0  # folder levels to look into under each image folder; 0 means all of them
     clones_dir: str = str(paths.CLONES_DIR)
     # Where restored databases' files go in the guest when restoring from .bak.
@@ -286,7 +305,7 @@ def _coerce(ftype: Any, value: Any) -> Any:
     return value
 
 
-for _cls in (VmSettings, SqlServer, VhdSettings, MonitorSettings, KerberosSettings, DockerSettings, UiSettings, RestoredDatabase, Mount):
+for _cls in (VmSettings, SqlServer, Share, VhdSettings, MonitorSettings, KerberosSettings, DockerSettings, UiSettings, RestoredDatabase, Mount):
     _NESTED[_cls.__name__] = _cls
 
 

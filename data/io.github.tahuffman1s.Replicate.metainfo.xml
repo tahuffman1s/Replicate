@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.3.0" date="2026-10-21">
+      <description>
+        <p>Network shares. Add an smb:// share (or \\server\share path) on the Images page and Replicate mounts it itself with your Kerberos ticket, a user name and password, or as a guest, so images on it are found by the scan and readable by the VM, by containers and by the mount helper. Needs cifs-utils on the computer.</p>
+      </description>
+    </release>
     <release version="0.2.6" date="2026-10-21">
       <description>
         <p>Connections to SQL Servers work again: since 0.1.1 every query failed with "Resource temporarily unavailable" because the connection's socket was left non-blocking.</p>

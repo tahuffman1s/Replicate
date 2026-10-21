@@ -139,4 +139,8 @@ def preflight(vm_uri: str) -> Preflight:
         result.notes.append(f"Docker: {message} (needed only for SQL Server in containers)")
     for problem in nbd.host_support():
         result.notes.append(f"Images for containers: {problem}")
+    from replicate.vhd import shares
+
+    for problem in shares.cifs_support():
+        result.notes.append(f"Network shares: {problem}")
     return result

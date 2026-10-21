@@ -242,6 +242,22 @@ instance, 14331, 14332, … for named ones), creates the `replicate` login as
 sysadmin, and opens the firewall. Progress goes to
 `C:\ProgramData\Replicate\setup-state.json`, which the host reads.
 
+### Images on a network share
+
+Opening `smb://server/share` in the file manager gives only your desktop
+session a view of it; QEMU runs as its own user and the mount helper as
+root, so neither can read images there. Add the share in Replicate instead
+(*Images & Clones → Add share…*, or pick an `smb://` location in *Add
+folder*): it mounts the share with the kernel CIFS client under
+`/run/replicate/shares/<id>`, read-only by default, signed in with your
+Kerberos ticket (the same one Kerberus or `kinit` gives you), a user name
+and password kept in your keyring, or as guest. The folder you named inside
+the share becomes an image folder like any other, and the VM, containers and
+the mount helper can all read from it. Mounting needs `cifs-utils` on the
+host (`mount.cifs`, and `cifs.upcall` with `keyutils` for Kerberos); on
+Fedora and Rocky also `setsebool -P virt_use_samba on` so the VM may read
+the share.
+
 ### When an image does not show up
 
 The Images page says what the last scan went through (folders, files, how

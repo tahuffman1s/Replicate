@@ -210,7 +210,7 @@ class Table(Gtk.ScrolledWindow):
 
 
 def file_chooser(parent: Gtk.Widget, title: str, callback: Callable[[str], None], *, folder: bool = False,
-                 filters: list[tuple[str, list[str]]] | None = None) -> None:
+                 filters: list[tuple[str, list[str]]] | None = None, allow_uri: bool = False) -> None:
     dialog = Gtk.FileDialog(title=title)
     if filters:
         store = Gio.ListStore(item_type=Gtk.FileFilter)
@@ -227,8 +227,12 @@ def file_chooser(parent: Gtk.Widget, title: str, callback: Callable[[str], None]
             file = d.select_folder_finish(result) if folder else d.open_finish(result)
         except Exception:  # noqa: BLE001 - cancelled
             return
-        if file is not None and file.get_path():
+        if file is None:
+            return
+        if file.get_path():
             callback(file.get_path())
+        elif allow_uri and file.get_uri():
+            callback(file.get_uri())  # smb:// and friends: no local path, the caller decides
 
     window = parent.get_root()
     if folder:

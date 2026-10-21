@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from replicate.config import Mount  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
 from replicate.ui.context import CONFIG_CHANGED, CONTAINERS_CHANGED, MOUNTS_CHANGED, AppContext  # noqa: E402
 from replicate.ui.dialogs.restore import AttachDialog, RestoreDialog, detach_mount  # noqa: E402
+from replicate.ui.dialogs.share import ShareDialog  # noqa: E402
+from replicate.vhd import shares as sh  # noqa: E402
 from replicate.ui.widgets.common import confirm, file_chooser, icon_button, status_label, status_page, text_button  # noqa: E402
 from replicate.util import human_size  # noqa: E402
 from replicate.vhd import clones as cl  # noqa: E402
@@ -52,10 +55,12 @@ class ImagesPage(Gtk.ScrolledWindow):
         self.mount_rows: list[Gtk.Widget] = []
 
         # Folders
-        self.folders_group = Adw.PreferencesGroup(title="Image folders")
-        self.folders_group.set_description("Where Replicate looks for .vhd, .vhdx, .qcow2 and raw images, in every folder underneath.")
-        add_folder = text_button("Add folder", self._on_add_folder)
-        self.folders_group.set_header_suffix(add_folder)
+        self.folders_group = Adw.PreferencesGroup(title="Image folders and shares")
+        self.folders_group.set_description("Where Replicate looks for images, in every folder underneath. A network share is mounted by Replicate so the VM and containers can read it too.")
+        header_box = Gtk.Box(spacing=6)
+        header_box.append(text_button("Add share…", self._on_add_share))
+        header_box.append(text_button("Add folder", self._on_add_folder))
+        self.folders_group.set_header_suffix(header_box)
         box.append(self.folders_group)
         self.folder_rows: list[Gtk.Widget] = []
 
@@ -103,8 +108,22 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.folders_group.remove(row)
         self.folder_rows.clear()
         dirs = self.ctx.config.vhd.image_dirs
-        if not dirs:
-            row = Adw.ActionRow(use_markup=False, title="No folders yet", subtitle="Add the folder your VHD images live in, or open a single file below.")
+        shares = self.ctx.config.vhd.shares
+        if not dirs and not shares:
+            row = Adw.ActionRow(use_markup=False, title="No folders yet", subtitle="Add the folder your VHD images live in, a network share, or open a single file below.")
+            self.folders_group.add(row)
+            self.folder_rows.append(row)
+        for share in shares:
+            mounted = sh.is_mounted(share)
+            row = Adw.ActionRow(use_markup=False, title=sh.display_name(share), subtitle=f"{share.url} · {share.auth} · {'mounted' if mounted else 'not mounted'}")
+            row.add_prefix(Gtk.Image.new_from_icon_name("network-server-symbolic"))
+            row.set_activatable(True)
+            row.connect("activated", lambda _r, share=share: ShareDialog(self.ctx, share, on_mounted=lambda _s: self.rescan()).present(self.get_root()))
+            if mounted:
+                row.add_suffix(text_button("Unmount", lambda share=share: self._unmount_share(share)))
+            else:
+                row.add_suffix(text_button("Mount", lambda share=share: self._mount_share(share), css="suggested-action"))
+            row.add_suffix(icon_button("user-trash-symbolic", "Forget this share", lambda share=share: self._forget_share(share), css="flat"))
             self.folders_group.add(row)
             self.folder_rows.append(row)
         for d in dirs:
@@ -115,12 +134,50 @@ class ImagesPage(Gtk.ScrolledWindow):
 
     def _on_add_folder(self) -> None:
         def chosen(path: str) -> None:
+            if sh.is_smb_uri(path):
+                self._on_add_share(path)
+                return
             if path not in self.ctx.config.vhd.image_dirs:
                 self.ctx.config.vhd.image_dirs.append(path)
                 self.ctx.save_config()
                 self.rescan()
 
-        file_chooser(self, "Choose an image folder", chosen, folder=True)
+        file_chooser(self, "Choose an image folder", chosen, folder=True, allow_uri=True)
+
+    def _on_add_share(self, uri: str = "") -> None:
+        share = sh.share_from_uri(uri) if uri else None
+        dialog = ShareDialog(self.ctx, on_mounted=lambda _s: self.rescan())
+        if share is not None:
+            dialog.url.set_text(share.url)
+            dialog.label.set_text(share.label)
+        dialog.present(self.get_root())
+
+    def _mount_share(self, share) -> None:
+        password = self.ctx.secrets.get(share.secret_key) or ""
+        self.ctx.toast(f"Mounting {sh.display_name(share)}; your password may be asked for")
+        run_in_thread(sh.mount_share, share, password, uid=os.getuid(), gid=os.getgid(),
+                      on_done=lambda _f: (self._refresh_folders(), self.rescan()),
+                      on_error=lambda e: (self.ctx.toast(str(e)[:200]), self._refresh_folders()), name="mount-share")
+
+    def _unmount_share(self, share) -> None:
+        run_in_thread(sh.unmount_share, share, on_done=lambda _r: (self._refresh_folders(), self.rescan()),
+                      on_error=lambda e: self.ctx.toast(str(e)[:200]), name="umount-share")
+
+    def _forget_share(self, share) -> None:
+        def go() -> None:
+            def after(_r=None) -> None:
+                if share in self.ctx.config.vhd.shares:
+                    self.ctx.config.vhd.shares.remove(share)
+                self.ctx.secrets.delete(share.secret_key)
+                self.ctx.save_config()
+                self.rescan()
+
+            if sh.is_mounted(share):
+                run_in_thread(sh.unmount_share, share, on_done=after, on_error=lambda e: (self.ctx.toast(str(e)[:200]), after()), name="umount-share")
+            else:
+                after()
+
+        confirm(self, f"Forget {sh.display_name(share)}?", "It is unmounted and removed from the list; nothing on the share is touched.", "Forget", go)
 
     def _remove_folder(self, path: str) -> None:
         self.ctx.config.vhd.image_dirs.remove(path)
@@ -148,6 +205,12 @@ class ImagesPage(Gtk.ScrolledWindow):
         self._rescan_pending = False
         self.rescan_button.set_sensitive(False)
         dirs = list(self.ctx.config.vhd.image_dirs)
+        for share in self.ctx.config.vhd.shares:
+            if sh.is_mounted(share):
+                try:
+                    dirs.append(sh.folder_path(share))
+                except sh.ShareError:
+                    pass
         report = ScanReport()
         if dirs:
             self.images_group.set_description("Scanning…")

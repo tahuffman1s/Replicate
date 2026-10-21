@@ -43,7 +43,7 @@ def _system_python() -> str:
     return sys.executable
 
 
-def _privileged(args: list[str]) -> dict:
+def _privileged(args: list[str], input_data: bytes | None = None) -> dict:
     python = _system_python()
     cmd = [python, str(HELPER), *args]
     if os.geteuid() != 0:
@@ -52,7 +52,7 @@ def _privileged(args: list[str]) -> dict:
             raise HostMountError("Mounting an image needs pkexec (polkit) or sudo")
         cmd = [helper, *cmd] if helper.endswith("pkexec") else [helper, "-n", *cmd]
     try:
-        out = run(cmd, timeout=300)
+        out = run(cmd, timeout=300, input_text=input_data.decode("utf-8") if input_data is not None else None)
     except CommandError as exc:
         text = (exc.stdout or "").strip()
         try:
