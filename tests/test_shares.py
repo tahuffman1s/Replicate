@@ -163,3 +163,102 @@ def test_mount_share_refuses_a_dead_system_mount(tmp_path, monkeypatch):
     monkeypatch.setattr(sh, "current_mounts", lambda: [sh.ExistingMount(str(tmp_path / "gone"), "//prodfs/sqlcloneimages$", options="rw,noperm")])
     with pytest.raises(sh.ShareError, match="mounted by the system"):
         sh.mount_share(share, None, uid=1, gid=1)
+
+
+# -- Kerberos mounts get their ticket through Kerberus -----------------------
+
+import datetime as dt
+
+from replicate.sql import kerberus_app
+
+
+def _cache(principal, *, default=False, state="valid", hours=8):
+    expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours)
+    return kerberus_app.CacheInfo(principal=principal, cache=f"KEYRING:persistent:1000:{principal}", default=default, state=state, renewable=True, expires=expires)
+
+
+@pytest.fixture
+def fake_kerberus(monkeypatch):
+    state = {"caches": [], "switched": [], "maintained": 0}
+    monkeypatch.setattr(kerberus_app, "list_caches", lambda k, timeout=20: list(state["caches"]))
+    monkeypatch.setattr(kerberus_app, "switch", lambda k, p, timeout=20: (state["switched"].append(p), True)[1])
+
+    def maintain(k, timeout=90):
+        state["maintained"] += 1
+        for c in state["caches"]:
+            if c.state == "expired":
+                c.state, c.expires = "valid", dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=8)
+        return True
+
+    monkeypatch.setattr(kerberus_app, "maintain_once", maintain)
+    state["kerberus"] = kerberus_app.Kerberus(["/opt/kerberus"], "path")
+    return state
+
+
+def test_ensure_ticket_picks_the_principal_and_makes_it_default(fake_kerberus):
+    fake_kerberus["caches"] = [_cache("travis@CORP.EXAMPLE.COM", default=True), _cache("admin@CORP.EXAMPLE.COM")]
+    share = Share(url="smb://prodfs/sqlcloneimages$", auth="kerberos")
+    assert sh.ensure_ticket(share, fake_kerberus["kerberus"]) == "travis@CORP.EXAMPLE.COM"
+    assert fake_kerberus["switched"] == []
+    share.principal = "admin@CORP.EXAMPLE.COM"
+    assert sh.ensure_ticket(share, fake_kerberus["kerberus"]) == "admin@CORP.EXAMPLE.COM"
+    assert fake_kerberus["switched"] == ["admin@CORP.EXAMPLE.COM"]
+    share.principal = "admin"  # user part only still finds it
+    assert sh.ensure_ticket(share, fake_kerberus["kerberus"]) == "admin@CORP.EXAMPLE.COM"
+
+
+def test_ensure_ticket_lets_kerberus_sign_in_again_for_an_expired_one(fake_kerberus):
+    fake_kerberus["caches"] = [_cache("travis@CORP.EXAMPLE.COM", default=True, state="expired", hours=-1)]
+    share = Share(url="smb://prodfs/sqlcloneimages$", auth="kerberos")
+    assert sh.ensure_ticket(share, fake_kerberus["kerberus"]) == "travis@CORP.EXAMPLE.COM"
+    assert fake_kerberus["maintained"] == 1
+
+
+def test_ensure_ticket_asks_for_a_sign_in_when_there_is_nothing(fake_kerberus):
+    share = Share(url="smb://prodfs/sqlcloneimages$", auth="kerberos", principal="travis@CORP.EXAMPLE.COM")
+    with pytest.raises(sh.NeedTicket) as info:
+        sh.ensure_ticket(share, fake_kerberus["kerberus"])
+    assert info.value.principal == "travis@CORP.EXAMPLE.COM" and "Kerberus" in str(info.value)
+    fake_kerberus["caches"] = [_cache("other@CORP.EXAMPLE.COM", default=True)]
+    with pytest.raises(sh.NeedTicket):
+        sh.ensure_ticket(share, fake_kerberus["kerberus"])
+
+
+def test_ensure_ticket_without_kerberus_uses_the_default_cache(monkeypatch):
+    from replicate.sql import kerberos
+
+    monkeypatch.setattr(kerberos, "current_ticket", lambda: None)
+    with pytest.raises(sh.NeedTicket):
+        sh.ensure_ticket(Share(url="smb://s/x", auth="kerberos"), None)
+    monkeypatch.setattr(kerberos, "current_ticket", lambda: kerberos.Ticket("travis@CORP.EXAMPLE.COM", None))
+    assert sh.ensure_ticket(Share(url="smb://s/x", auth="kerberos"), kerberus_app.Kerberus()) == "travis@CORP.EXAMPLE.COM"
+    monkeypatch.setattr(kerberus_app, "switch", lambda k, p, timeout=20: False)
+    with pytest.raises(sh.NeedTicket, match="default ticket is travis"):
+        sh.ensure_ticket(Share(url="smb://s/x", auth="kerberos", principal="admin@CORP.EXAMPLE.COM"), None)
+
+
+def test_kerberos_mount_checks_the_ticket_before_asking_the_helper(tmp_path, fake_kerberus, monkeypatch):
+    share = Share(id="abc", url="smb://prodfs/sqlcloneimages$", auth="kerberos", principal="admin@CORP.EXAMPLE.COM")
+    monkeypatch.setattr(sh, "current_mounts", lambda: [])
+    monkeypatch.setattr(sh, "fstab_mounts", lambda: [])
+    monkeypatch.setattr(sh, "which", lambda *names: "/sbin/mount.cifs")
+    monkeypatch.setattr(sh, "mountpoint_for", lambda s: str(tmp_path / "own"))
+    calls = []
+    from replicate.vhd import nbd
+
+    monkeypatch.setattr(nbd, "_privileged", lambda args, input_data=None: (calls.append(args), (tmp_path / "own").mkdir(exist_ok=True)))
+    with pytest.raises(sh.NeedTicket):
+        sh.mount_share(share, None, uid=1, gid=1, kerberus=fake_kerberus["kerberus"])
+    assert calls == []
+    fake_kerberus["caches"] = [_cache("travis@CORP.EXAMPLE.COM", default=True), _cache("admin@CORP.EXAMPLE.COM")]
+    assert sh.mount_share(share, None, uid=1, gid=1, kerberus=fake_kerberus["kerberus"]) == str(tmp_path / "own")
+    assert fake_kerberus["switched"] == ["admin@CORP.EXAMPLE.COM"] and calls[0][0] == "mount-share"
+    assert "sec=krb5" in calls[0][4] and "cruid=1" in calls[0][4]
+
+
+def test_principal_round_trips_in_config(tmp_path):
+    cfg = AppConfig()
+    cfg.vhd.shares.append(Share(url="smb://s/sh", auth="kerberos", principal="travis@CORP.EXAMPLE.COM"))
+    path = tmp_path / "c.json"
+    save_config(cfg, path)
+    assert load_config(path).vhd.shares[0].principal == "travis@CORP.EXAMPLE.COM"

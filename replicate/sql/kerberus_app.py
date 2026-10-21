@@ -183,9 +183,7 @@ def running() -> bool:
         import gi
 
         gi.require_version("Gio", "2.0")
-        from gi.repository import Gio
-
-        from gi.repository import GLib
+        from gi.repository import Gio, GLib
 
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         reply = bus.call_sync(
@@ -193,7 +191,7 @@ def running() -> bool:
             GLib.Variant("(s)", (KERBERUS_APP_ID,)), None, Gio.DBusCallFlags.NONE, 2000, None,
         )
         return bool(reply.unpack()[0])
-    except Exception as exc:  # noqa: BLE001 - no session bus, no gi
+    except Exception as exc:
         log.debug("cannot ask the session bus: %s", exc)
         return False
 
@@ -211,7 +209,7 @@ def _activate_action(name: str, parameter) -> bool:
             GLib.Variant("(sava{sv})", (name, params, {})), None, Gio.DBusCallFlags.NONE, 5000, None,
         )
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.debug("activating %s on Kerberus failed: %s", name, exc)
         return False
 
@@ -255,3 +253,53 @@ def show(kerberus: Kerberus) -> bool:
         return True
     except OSError:
         return False
+
+
+def switch(kerberus: Kerberus, principal: str, timeout: float = 20) -> bool:
+    """Make ``principal``'s cache the default one (kswitch), so tools that only
+    look at the default cache, such as cifs.upcall for a Kerberos share mount,
+    use that ticket."""
+    if not kerberus.available:
+        found = which("kswitch")
+        if not found:
+            return False
+        proc = subprocess.run([found, "-p", principal], capture_output=True, text=True, timeout=timeout, check=False)
+        return proc.returncode == 0
+    try:
+        proc = subprocess.run([*kerberus.command, "switch", principal], capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("kerberus switch failed: %s", exc)
+        return False
+    return proc.returncode == 0
+
+
+def maintain_once(kerberus: Kerberus, timeout: float = 90) -> bool:
+    """One pass of Kerberus's background work: renew what can be renewed and
+    sign in again, with the password it remembers, where a ticket ran out.
+    The quiet way to get a ticket back without a dialog."""
+    if not kerberus.available:
+        return False
+    try:
+        proc = subprocess.run([*kerberus.command, "watch", "--once"], capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("kerberus watch --once failed: %s", exc)
+        return False
+    return proc.returncode == 0
+
+
+def usable(cache: CacheInfo | None) -> bool:
+    return cache is not None and cache.state != "expired" and (cache.expires is None or cache.expires > dt.datetime.now(cache.expires.tzinfo))
+
+
+def wait_for_ticket(kerberus: Kerberus, principal: str, *, seconds: float = 120, poll: float = 3) -> CacheInfo | None:
+    """Poll until Kerberus holds a usable ticket for ``principal`` (the default one when blank)."""
+    import time
+
+    deadline = time.monotonic() + seconds
+    while True:
+        found = cache_for(list_caches(kerberus), principal)
+        if usable(found):
+            return found
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(poll)

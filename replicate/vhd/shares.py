@@ -31,6 +31,51 @@ class ShareError(RuntimeError):
     pass
 
 
+class NeedTicket(ShareError):
+    """A Kerberos share mount has no ticket to use; ``principal`` says whose."""
+
+    def __init__(self, principal: str, detail: str = ""):
+        self.principal = principal
+        who = principal or "your account"
+        super().__init__(f"No Kerberos ticket for {who} on this computer" + (f": {detail}" if detail else "") + ". Sign in with Kerberus (or kinit) first.")
+
+
+def ensure_ticket(share: Share, kerberus=None) -> str:
+    """See that the ticket a Kerberos mount will use is there, through Kerberus when it is installed.
+
+    cifs.upcall, which the kernel asks for the credentials, reads the mounting
+    user's default credential cache. So: find a usable ticket for the share's
+    principal (any principal when blank) among the caches Kerberus holds, make
+    it the default (kswitch) if another one is, and when the ticket has run
+    out let Kerberus sign in again with the password it remembers. Returns the
+    principal in use; raises NeedTicket when only a sign-in dialog can help.
+    """
+    from replicate.sql import kerberos, kerberus_app
+
+    wanted = share.principal.strip()
+    if kerberus is not None and kerberus.available:
+        caches = kerberus_app.list_caches(kerberus)
+        found = kerberus_app.cache_for(caches, wanted)
+        if found is not None and not kerberus_app.usable(found):
+            log.info("ticket for %s has run out; asking Kerberus to sign in again with its saved password", found.principal)
+            kerberus_app.maintain_once(kerberus)
+            caches = kerberus_app.list_caches(kerberus)
+            found = kerberus_app.cache_for(caches, wanted)
+        if not kerberus_app.usable(found):
+            raise NeedTicket(wanted or (found.principal if found else ""))
+        if not found.default and not kerberus_app.switch(kerberus, found.principal):
+            raise ShareError(f"{found.principal} holds a ticket but could not be made the default one; run kswitch -p {found.principal}")
+        return found.principal
+    ticket = kerberos.current_ticket()
+    if ticket is None or not ticket.valid:
+        raise NeedTicket(wanted)
+    if wanted and "@" in wanted and ticket.principal.lower() != wanted.lower():
+        if kerberus_app.switch(kerberus_app.Kerberus(), wanted):
+            return wanted
+        raise NeedTicket(wanted, f"the default ticket is {ticket.principal}")
+    return ticket.principal
+
+
 @dataclass
 class ShareParts:
     server: str
@@ -288,7 +333,7 @@ def credentials_for(share: Share, password: str | None) -> dict[str, str] | None
     return None
 
 
-def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> str:
+def mount_share(share: Share, password: str | None, *, uid: int, gid: int, kerberus=None) -> str:
     """Make the share's image folder available and return it.
 
     A mount that is already there is used when it will do: Replicate's own
@@ -297,7 +342,8 @@ def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> st
     whose files other users can read. A system mount with modes only the
     owner can read is left alone and Replicate mounts the share again, for
     QEMU and containers, under its own mount point. Mounting the same share
-    twice is fine for CIFS.
+    twice is fine for CIFS. A Kerberos mount first makes sure of its ticket
+    (see ensure_ticket), through ``kerberus`` when given.
     """
     from replicate.vhd import nbd
 
@@ -332,6 +378,8 @@ def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> st
                              "Is the network or VPN up? Unmount it there and try again.")
     if not which("mount.cifs"):
         raise ShareError("mount.cifs is not installed; install cifs-utils")
+    if share.auth == "kerberos":
+        ensure_ticket(share, kerberus)
     args = ["mount-share", parts.unc, target, "--options", mount_options(share, uid=uid, gid=gid)]
     stdin = None
     credentials = credentials_for(share, password)
@@ -365,8 +413,9 @@ def _explain(message: str, share: Share) -> str:
     text = message.lower()
     if "permission denied" in text or "error(13)" in text:
         if share.auth == "kerberos":
-            return ("The server refused the Kerberos ticket. Check that this computer holds a ticket (Kerberus or kinit), "
-                    "that cifs.upcall is installed, and that the share allows your account. " + message)
+            return ("The server refused the Kerberos ticket" + (f" for {share.principal}" if share.principal else "") +
+                    ". Check in Kerberus that the ticket is current and from the right realm, that cifs.upcall is installed, "
+                    "and that the share allows your account. " + message)
         if share.auth == "cortex":
             return "The server did not accept the sign-in Cortex keeps; check it in Cortex: " + message
         return "The user name or password was not accepted: " + message

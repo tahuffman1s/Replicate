@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.4.2" date="2026-10-21">
+      <description>
+        <p>Kerberos share mounts get their ticket through Kerberus: the share dialog shows the tickets Kerberus holds and lets you pick the principal, the one chosen is made the default for the mount, an expired ticket is renewed with the password Kerberus remembers, and when there is none Kerberus's own sign-in dialog opens and the mount follows once the ticket arrives.</p>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-10-21">
       <description>
         <p>A share that is mounted already is used as it is: Replicate's own mount (remounted when it stops answering), one made for another entry of the same share, or a system mount from fstab or a systemd automount. A system mount only its owner can read is mounted again for the VM and containers. Mounting twice no longer fails, and only Replicate's own mounts are unmounted by it.</p>

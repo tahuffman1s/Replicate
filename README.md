@@ -258,6 +258,17 @@ host (`mount.cifs`, and `cifs.upcall` with `keyutils` for Kerberos); on
 Fedora and Rocky also `setsebool -P virt_use_samba on` so the VM may read
 the share.
 
+A Kerberos mount gets its ticket through Kerberus when it is installed.
+The kernel asks `cifs.upcall` for the credentials, and that reads the
+mounting user's default credential cache, so before mounting Replicate
+looks among the tickets Kerberus holds for the share's principal (*Sign in
+as* in the share dialog; blank means the default ticket), makes it the
+default with `kswitch` when another one is, lets Kerberus sign in again
+with the password it remembers when the ticket has run out, and, when there
+is no ticket at all, opens Kerberus's own sign-in dialog and mounts once
+the ticket arrives. Without Kerberus the same happens with `kinit` and a
+password prompt in Replicate.
+
 A share that is mounted already is used as it is. Replicate looks in
 `/proc/mounts` for a CIFS mount of the same server and share: its own
 (remounted if it stopped answering), one it made for another entry, or one

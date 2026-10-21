@@ -1,5 +1,4 @@
 import json
-import os
 import stat
 
 from replicate.sql import kerberus_app as ka
@@ -68,3 +67,38 @@ def test_list_caches_runs_the_command(tmp_path, monkeypatch):
     caches = ka.list_caches(ka.Kerberus([str(script)], "path"))
     assert len(caches) == 2
     assert ka.list_caches(ka.Kerberus()) == []
+
+
+def test_switch_and_maintain_run_kerberus(monkeypatch, tmp_path):
+    import subprocess
+
+    from replicate.sql import kerberus_app
+
+    runs = []
+
+    class Done:
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: (runs.append(argv), Done())[1])
+    k = kerberus_app.Kerberus(["/opt/kerberus"], "path")
+    assert kerberus_app.switch(k, "travis@CORP.EXAMPLE.COM") and runs[-1] == ["/opt/kerberus", "switch", "travis@CORP.EXAMPLE.COM"]
+    assert kerberus_app.maintain_once(k) and runs[-1] == ["/opt/kerberus", "watch", "--once"]
+    assert not kerberus_app.maintain_once(kerberus_app.Kerberus())
+    monkeypatch.setattr(kerberus_app, "which", lambda name: None)
+    assert not kerberus_app.switch(kerberus_app.Kerberus(), "x@Y")
+
+
+def test_usable_and_wait_for_ticket(monkeypatch):
+    import datetime as dt
+
+    from replicate.sql import kerberus_app
+
+    live = kerberus_app.CacheInfo("a@R", "c", True, "valid", True, dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1))
+    dead = kerberus_app.CacheInfo("a@R", "c", True, "expired", True, dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+    assert kerberus_app.usable(live) and not kerberus_app.usable(dead) and not kerberus_app.usable(None)
+    rounds = [[], [dead], [live]]
+    monkeypatch.setattr(kerberus_app, "list_caches", lambda k, timeout=20: rounds.pop(0) if rounds else [live])
+    found = kerberus_app.wait_for_ticket(kerberus_app.Kerberus(["k"]), "a@R", seconds=5, poll=0.01)
+    assert found is live
+    monkeypatch.setattr(kerberus_app, "list_caches", lambda k, timeout=20: [])
+    assert kerberus_app.wait_for_ticket(kerberus_app.Kerberus(["k"]), "", seconds=0.05, poll=0.01) is None

@@ -98,7 +98,18 @@ class ShareDialog(Adw.Dialog):
         auth.add(self.user)
         self.password = Adw.PasswordEntryRow(title="Password" + (" (blank keeps the saved one)" if self.editing else ""))
         auth.add(self.password)
+        self.principal = Adw.EntryRow(title="Sign in as (user@REALM; blank: the default ticket)", text=self.share.principal)
+        self.principal.connect("changed", lambda *_: self._ticket_dirty())
+        auth.add(self.principal)
         self.ticket_row = Adw.ActionRow(use_markup=False, title="Kerberos ticket", subtitle="Checking…")
+        self.ticket_row.set_subtitle_lines(3)
+        self.kerberus_button = Gtk.Button(icon_name="window-new-symbolic", valign=Gtk.Align.CENTER, visible=False, tooltip_text="Open Kerberus")
+        self.kerberus_button.add_css_class("flat")
+        self.kerberus_button.update_property([Gtk.AccessibleProperty.LABEL], ["Open Kerberus"])
+        self.kerberus_button.connect("clicked", lambda *_: self._open_kerberus())
+        self.ticket_row.add_suffix(self.kerberus_button)
+        self.ticket_button = text_button("Get Ticket…", self._on_get_ticket)
+        self.ticket_row.add_suffix(self.ticket_button)
         auth.add(self.ticket_row)
         page.add(auth)
 
@@ -165,6 +176,7 @@ class ShareDialog(Adw.Dialog):
         self.user.set_visible(mode == "password")
         self.password.set_visible(mode == "password")
         self.ticket_row.set_visible(mode == "kerberos")
+        self.principal.set_visible(mode == "kerberos")
         self.cortex_row.set_visible(mode == "cortex")
         if mode == "cortex":
             acct = self.cortex_account
@@ -179,12 +191,105 @@ class ShareDialog(Adw.Dialog):
 
                 run_in_thread(cortex_app.password, acct, on_done=found, on_error=lambda e: self.cortex_row.set_subtitle(str(e)), name="cortex-password")
         if mode == "kerberos":
-            from replicate.sql import kerberos
+            self._refresh_ticket()
 
-            def done(ticket) -> None:
-                self.ticket_row.set_subtitle(ticket.describe() if ticket else "No ticket on this computer; get one with Kerberus or kinit first")
+    # -- Kerberos through Kerberus ------------------------------------------
+    def _ticket_dirty(self) -> None:
+        if self._mode() == "kerberos" and not getattr(self, "_ticket_pending", False):
+            self._ticket_pending = True
+            from gi.repository import GLib
 
-            run_in_thread(kerberos.current_ticket, on_done=done, on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="klist")
+            GLib.timeout_add(600, lambda: (setattr(self, "_ticket_pending", False), self._refresh_ticket()) and False)
+
+    def _refresh_ticket(self) -> None:
+        """What the mount will sign in with: the ticket Kerberus holds for the principal, or the default one."""
+        from replicate.sql import kerberos, kerberus_app
+
+        wanted = self.principal.get_text().strip()
+        kerberus = self.ctx.kerberus()
+        self.kerberus_button.set_visible(kerberus.available)
+        self.ticket_button.set_label("Sign In with Kerberus…" if kerberus.available else "Get Ticket…")
+
+        def work():
+            if kerberus.available:
+                caches = kerberus_app.list_caches(kerberus)
+                return "kerberus", kerberus_app.cache_for(caches, wanted), caches
+            return "local", kerberos.current_ticket(), []
+
+        def done(result) -> None:
+            source, found, caches = result
+            if found is None or (source == "kerberus" and not kerberus_app.usable(found)) or (source == "local" and not found.valid):
+                text = f"No ticket for {wanted}" if wanted else "No ticket on this computer"
+                if found is not None and source == "kerberus":
+                    text = f"{found.principal} · ran out; Kerberus signs in again with its saved password when you mount"
+                elif caches:
+                    text += "; Kerberus has " + ", ".join(c.principal for c in caches[:3])
+                else:
+                    text += "; the mount will ask Kerberus to sign in" if kerberus.available else "; Get Ticket… or kinit first"
+                self.ticket_row.set_subtitle(text)
+                return
+            text = found.describe()
+            if source == "kerberus" and not found.default:
+                text += " · made the default for the mount (kswitch)"
+            self.ticket_row.set_subtitle(text)
+
+        run_in_thread(work, on_done=done, on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="tickets")
+
+    def _open_kerberus(self) -> None:
+        from replicate.sql import kerberus_app
+
+        if not kerberus_app.show(self.ctx.kerberus()):
+            self.ctx.toast("Kerberus could not be started")
+
+    def _on_get_ticket(self, then=None) -> None:
+        """Have Kerberus sign in for the principal (its own dialog), then refresh; without Kerberus, ask here."""
+        from replicate.sql import kerberus_app
+
+        kerberus = self.ctx.kerberus()
+        principal = self.principal.get_text().strip()
+        if kerberus.available:
+            self.ticket_row.set_subtitle(f"Asking Kerberus to sign in{' as ' + principal if principal else ''}…")
+
+            def reached(ok: bool) -> None:
+                if not ok:
+                    self.ticket_row.set_subtitle("Kerberus did not respond")
+                    self._builtin_get_ticket(then)
+                    return
+                self.ctx.toast("Finish signing in in Kerberus" + ("; the mount follows" if then else ""))
+                run_in_thread(kerberus_app.wait_for_ticket, kerberus, principal, seconds=180,
+                              on_done=lambda found: (self._refresh_ticket(), then() if then and found else None),
+                              on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="wait-ticket")
+
+            run_in_thread(kerberus_app.sign_in, kerberus, principal, on_done=reached, on_error=lambda e: self._builtin_get_ticket(then), name="kerberus-sign-in")
+            return
+        self._builtin_get_ticket(then)
+
+    def _builtin_get_ticket(self, then=None) -> None:
+        from replicate.sql import kerberos
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        principal = Gtk.Entry(placeholder_text="user@REALM", text=self.principal.get_text().strip())
+        password = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Password")
+        box.append(principal)
+        box.append(password)
+        dialog = Adw.AlertDialog(heading="Get a Kerberos ticket", body="Logs this computer in to the domain; the ticket is kept in your credential cache, not by Replicate.")
+        dialog.set_extra_child(box)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", "Get Ticket")
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        password.connect("activate", lambda *_: dialog.response("ok"))
+
+        def on_response(_d, response: str) -> None:
+            if response != "ok":
+                return
+            self.ticket_row.set_subtitle("Getting a ticket…")
+            run_in_thread(kerberos.obtain_ticket, principal.get_text().strip(), password.get_text(),
+                          on_done=lambda t: (self.ticket_row.set_subtitle(t.describe()), then() if then else None),
+                          on_error=lambda e: self.ticket_row.set_subtitle(str(e)), name="kinit")
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     def _on_go(self) -> None:
         try:
@@ -199,6 +304,7 @@ class ShareDialog(Adw.Dialog):
         s.auth = self._mode()
         s.domain = self.domain.get_text().strip() if s.auth == "password" else ""
         s.username = self.user.get_text().strip() if s.auth == "password" else ""
+        s.principal = self.principal.get_text().strip() if s.auth == "kerberos" else ""
         password = self.password.get_text() or None
         if s.auth == "password" and not s.username:
             error_dialog(self, "User name needed", "Enter the account to sign in to the share with.")
@@ -209,10 +315,6 @@ class ShareDialog(Adw.Dialog):
         if password and s.auth == "password":
             self.ctx.secrets.set(s.secret_key, password)
         pw = password or self.ctx.secrets.get(s.secret_key) or ""
-        self.go.set_sensitive(False)
-        self.status_group.set_visible(True)
-        self.status_row.set_title("Mounting…")
-        self.status_row.set_subtitle("Your administrator password may be asked for")
 
         def done(folder: str) -> None:
             if s not in self.ctx.config.vhd.shares:
@@ -228,7 +330,28 @@ class ShareDialog(Adw.Dialog):
             self.status_row.set_title("Could not mount")
             self.status_row.set_subtitle(str(exc))
 
-        run_in_thread(sh.mount_share, s, pw, uid=os.getuid(), gid=os.getgid(), on_done=done, on_error=failed, name="mount-share")
+        def mount() -> None:
+            self.go.set_sensitive(False)
+            self.status_row.set_title("Mounting…")
+            self.status_row.set_subtitle("Your administrator password may be asked for")
+            run_in_thread(sh.mount_share, s, pw, uid=os.getuid(), gid=os.getgid(), kerberus=self.ctx.kerberus(), on_done=done, on_error=failed, name="mount-share")
+
+        def first_failed(exc: BaseException) -> None:
+            if isinstance(exc, sh.NeedTicket) and not getattr(self, "_asked_for_ticket", False):
+                # no ticket: get one through Kerberus (its own sign-in dialog), then mount
+                self._asked_for_ticket = True
+                self.status_row.set_title("Signing in first")
+                self.status_row.set_subtitle(str(exc))
+                self.go.set_sensitive(True)
+                self._on_get_ticket(then=mount)
+                return
+            failed(exc)
+
+        self.go.set_sensitive(False)
+        self.status_group.set_visible(True)
+        self.status_row.set_title("Mounting…")
+        self.status_row.set_subtitle("Your administrator password may be asked for")
+        run_in_thread(sh.mount_share, s, pw, uid=os.getuid(), gid=os.getgid(), kerberus=self.ctx.kerberus(), on_done=done, on_error=first_failed, name="mount-share")
 
 
 def cortex_hint_row(ctx: AppContext, on_add) -> Adw.ActionRow | None:

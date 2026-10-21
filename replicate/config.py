@@ -141,6 +141,7 @@ class Share:
     id: str = field(default_factory=new_id)
     url: str = ""  # smb://server/share/sub/folder
     auth: str = "kerberos"  # kerberos (this computer's ticket), password, cortex (the sign-in Cortex keeps), or guest
+    principal: str = ""  # kerberos: which ticket (user@REALM); blank means the default one
     domain: str = ""
     username: str = ""
     readonly: bool = True

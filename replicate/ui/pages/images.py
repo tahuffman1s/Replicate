@@ -200,9 +200,18 @@ class ImagesPage(Gtk.ScrolledWindow):
     def _mount_share(self, share) -> None:
         password = self.ctx.secrets.get(share.secret_key) or ""
         self.ctx.toast(f"Mounting {sh.display_name(share)}; your password may be asked for")
-        run_in_thread(sh.mount_share, share, password, uid=os.getuid(), gid=os.getgid(),
-                      on_done=lambda _f: (self._refresh_folders(), self.rescan()),
-                      on_error=lambda e: (self.ctx.toast(str(e)[:200]), self._refresh_folders()), name="mount-share")
+
+        def failed(exc: BaseException) -> None:
+            self._refresh_folders()
+            if isinstance(exc, sh.NeedTicket):
+                # the dialog signs in through Kerberus and mounts afterwards
+                self.ctx.toast(str(exc)[:200])
+                ShareDialog(self.ctx, share, on_mounted=lambda _s: self.rescan()).present(self.get_root())
+                return
+            self.ctx.toast(str(exc)[:200])
+
+        run_in_thread(sh.mount_share, share, password, uid=os.getuid(), gid=os.getgid(), kerberus=self.ctx.kerberus(),
+                      on_done=lambda _f: (self._refresh_folders(), self.rescan()), on_error=failed, name="mount-share")
 
     def _unmount_share(self, share) -> None:
         run_in_thread(sh.unmount_share, share, on_done=lambda _r: (self._refresh_folders(), self.rescan()),
