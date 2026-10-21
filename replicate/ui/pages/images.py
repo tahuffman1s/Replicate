@@ -10,18 +10,35 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk
 
-from replicate.config import Mount  # noqa: E402
-from replicate.tasks import run_in_thread  # noqa: E402
-from replicate.ui.context import CONFIG_CHANGED, CONTAINERS_CHANGED, MOUNTS_CHANGED, AppContext  # noqa: E402
-from replicate.ui.dialogs.restore import AttachDialog, RestoreDialog, detach_mount  # noqa: E402
-from replicate.ui.dialogs.share import ShareDialog  # noqa: E402
-from replicate.vhd import shares as sh  # noqa: E402
-from replicate.ui.widgets.common import confirm, file_chooser, icon_button, status_label, status_page, text_button  # noqa: E402
-from replicate.util import human_size  # noqa: E402
-from replicate.vhd import clones as cl  # noqa: E402
-from replicate.vhd.images import ImageInfo, ScanReport, scan  # noqa: E402
+from replicate.config import Mount
+from replicate.tasks import run_in_thread
+from replicate.ui.context import (
+    CONFIG_CHANGED,
+    CONTAINERS_CHANGED,
+    MOUNTS_CHANGED,
+    AppContext,
+)
+from replicate.ui.dialogs.restore import (
+    AttachDialog,
+    RestoreDialog,
+    detach_mount,
+)
+from replicate.ui.dialogs.share import ShareDialog, cortex_hint_row
+from replicate.ui.widgets.common import (
+    confirm,
+    file_chooser,
+    icon_button,
+    status_label,
+    status_page,
+    text_button,
+)
+from replicate.util import human_size
+from replicate.vhd import clones as cl
+from replicate.vhd import cortex_app
+from replicate.vhd import shares as sh
+from replicate.vhd.images import ImageInfo, ScanReport, scan
 
 
 class ImagesPage(Gtk.ScrolledWindow):
@@ -29,6 +46,7 @@ class ImagesPage(Gtk.ScrolledWindow):
         super().__init__()
         self.ctx = ctx
         self.images: list[ImageInfo] = []
+        self._cortex_roots: dict[str, cortex_app.Drive] = {}  # gvfs folder -> the Cortex drive it is
         self._scanning = False
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.switcher = Gtk.Stack()
@@ -93,7 +111,7 @@ class ImagesPage(Gtk.ScrolledWindow):
 
     # -- folders ------------------------------------------------------------
     def _update_empty(self) -> None:
-        has_anything = bool(self.ctx.config.vhd.image_dirs or self.ctx.mounter.mounts() or self.ctx.docker_mounter.mounts() or cl.list_clones(self.ctx.config.vhd.clones_dir))
+        has_anything = bool(self.ctx.config.vhd.image_dirs or self.ctx.config.vhd.shares or self.ctx.mounter.mounts() or self.ctx.docker_mounter.mounts() or cl.list_clones(self.ctx.config.vhd.clones_dir))
         self.switcher.set_visible_child_name("content" if has_anything else "empty")
 
     def on_refresh(self) -> None:
@@ -131,6 +149,10 @@ class ImagesPage(Gtk.ScrolledWindow):
             row.add_suffix(icon_button("user-trash-symbolic", "Forget this folder", lambda d=d: self._remove_folder(d), css="flat"))
             self.folders_group.add(row)
             self.folder_rows.append(row)
+        hint = cortex_hint_row(self.ctx, self._on_add_share)
+        if hint is not None:
+            self.folders_group.add(hint)
+            self.folder_rows.append(hint)
 
     def _on_add_folder(self) -> None:
         def chosen(path: str) -> None:
@@ -144,12 +166,29 @@ class ImagesPage(Gtk.ScrolledWindow):
 
         file_chooser(self, "Choose an image folder", chosen, folder=True, allow_uri=True)
 
-    def _on_add_share(self, uri: str = "") -> None:
-        share = sh.share_from_uri(uri) if uri else None
+    def _on_add_share(self, uri: str = "", share=None) -> None:
+        share = share or (sh.share_from_uri(uri) if uri else None)
         dialog = ShareDialog(self.ctx, on_mounted=lambda _s: self.rescan())
         if share is not None:
             dialog.url.set_text(share.url)
             dialog.label.set_text(share.label)
+            if share.auth in dialog.auths:
+                dialog.auth.set_selected(dialog.auths.index(share.auth))
+        dialog.present(self.get_root())
+
+    def _attach_from_cortex(self, img: ImageInfo, drive: cortex_app.Drive) -> None:
+        """An image reached through Cortex's desktop connection: only this session can read it there."""
+        dialog = Adw.AlertDialog(
+            heading="Mount the share with Replicate first",
+            body=(f"{img.name} was found on {drive.name}, a drive Cortex has connected for your desktop session. "
+                  "The VM, containers and the mount helper run as other users and cannot read it that way. "
+                  "Add the share here and Replicate mounts it for them, signed in with the account Cortex keeps."),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("add", "Add share…")
+        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("add")
+        dialog.connect("response", lambda _d, r: self._on_add_share(share=sh.share_from_drive(drive)) if r == "add" else None)
         dialog.present(self.get_root())
 
     def _mount_share(self, share) -> None:
@@ -205,26 +244,42 @@ class ImagesPage(Gtk.ScrolledWindow):
         self._rescan_pending = False
         self.rescan_button.set_sensitive(False)
         dirs = list(self.ctx.config.vhd.image_dirs)
+        mounted_shares = []
         for share in self.ctx.config.vhd.shares:
             if sh.is_mounted(share):
                 try:
                     dirs.append(sh.folder_path(share))
+                    mounted_shares.append(share)
                 except sh.ShareError:
                     pass
         report = ScanReport()
-        if dirs:
+        if dirs or cortex_app.installed():
             self.images_group.set_description("Scanning…")
+        depth = self.ctx.config.vhd.scan_depth
+
+        def work(progress):
+            # Drives Cortex has connected are readable through gvfsd-fuse by this user: images on them
+            # are found now, and attaching one leads to mounting the share with Replicate.
+            cortex_roots: dict[str, cortex_app.Drive] = {}
+            for drive, folder in cortex_app.connected_drives():
+                if any(cortex_app.same_share(drive.path, s.url) for s in mounted_shares):
+                    continue
+                cortex_roots[folder] = drive
+            roots = dirs + [f for f in cortex_roots if f not in dirs]
+            return scan(roots, max_depth=depth, report=report, progress=progress), cortex_roots
 
         def on_progress(folders: int, found: int) -> None:
             from replicate.tasks import on_main
 
             on_main(self.images_group.set_description, f"Scanning… {folders:,} folders, {found} image{'s' if found != 1 else ''} so far")
 
-        def done(images: list[ImageInfo]) -> None:
+        def done(result) -> None:
+            images, cortex_roots = result
             self._scanning = False
             self.rescan_button.set_sensitive(True)
             self.images = images
-            self.images_group.set_description(report.describe(len(images)) if dirs else "")
+            self._cortex_roots = cortex_roots
+            self.images_group.set_description(report.describe(len(images)) if dirs or cortex_roots else "")
             self._render_images()
             self.refresh_clones()
             if getattr(self, "_rescan_pending", False):
@@ -235,7 +290,7 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.rescan_button.set_sensitive(True)
             self.ctx.toast(f"Scan failed: {exc}")
 
-        run_in_thread(scan, dirs, max_depth=self.ctx.config.vhd.scan_depth, report=report, progress=on_progress, on_done=done, on_error=failed, name="scan")
+        run_in_thread(work, on_progress, on_done=done, on_error=failed, name="scan")
 
     def _render_images(self) -> None:
         for row in self.image_rows:
@@ -262,7 +317,13 @@ class ImagesPage(Gtk.ScrolledWindow):
                 row.add_suffix(status_label("differencing", "warn"))
             if img.path in attached_images:
                 row.add_suffix(status_label("attached", "good"))
-            attach = text_button("Attach…", lambda img=img: AttachDialog(self.ctx, img).present(self.get_root()))
+            drive = self._cortex_roots.get(img.root)
+            if drive is not None:
+                row.add_suffix(status_label("via Cortex", "warn"))
+                row.set_tooltip_text(f"{img.path}\nReached through Cortex's connection to {drive.name}; mount the share with Replicate to attach it")
+                attach = text_button("Attach…", lambda img=img, drive=drive: self._attach_from_cortex(img, drive))
+            else:
+                attach = text_button("Attach…", lambda img=img: AttachDialog(self.ctx, img).present(self.get_root()))
             attach.set_sensitive(not img.error)
             row.add_suffix(attach)
             self.images_group.add(row)

@@ -140,7 +140,7 @@ class Share:
 
     id: str = field(default_factory=new_id)
     url: str = ""  # smb://server/share/sub/folder
-    auth: str = "kerberos"  # kerberos (this computer's ticket), password, or guest
+    auth: str = "kerberos"  # kerberos (this computer's ticket), password, cortex (the sign-in Cortex keeps), or guest
     domain: str = ""
     username: str = ""
     readonly: bool = True

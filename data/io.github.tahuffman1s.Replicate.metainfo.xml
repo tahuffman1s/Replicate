@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.4.0" date="2026-10-21">
+      <description>
+        <p>Works with Cortex, the network drive manager. The drives Cortex keeps are offered when adding a share, a share can sign in with the account Cortex keeps (its password is read from the keyring entry Cortex stored, so it is typed once), and images on a drive Cortex has connected are found right away and marked "via Cortex", with attaching leading to a Replicate mount of the share. Settings gains a Network drives section that says what Cortex holds and opens it.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-10-21">
       <description>
         <p>Network shares. Add an smb:// share (or \\server\share path) on the Images page and Replicate mounts it itself with your Kerberos ticket, a user name and password, or as a guest, so images on it are found by the scan and readable by the VM, by containers and by the mount helper. Needs cifs-utils on the computer.</p>

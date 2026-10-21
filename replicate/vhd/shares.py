@@ -4,14 +4,14 @@ A folder opened through the desktop's own smb:// layer (KIO, GVFS) exists
 only for the signed-in user; QEMU runs as another user and the mount helper
 as root, so neither could read images there. Replicate therefore mounts the
 share itself under /run/replicate/shares/<id> with the kernel CIFS client,
-using the user's Kerberos ticket, a password, or guest access, and treats
-the folder inside it as an image folder.
+using the user's Kerberos ticket, a password, the sign-in kept by Cortex
+(the network drive manager, see cortex_app), or guest access, and treats the
+folder inside it as an image folder.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +118,7 @@ def mount_options(share: Share, *, uid: int, gid: int) -> str:
         opts += ["sec=krb5", f"cruid={uid}"]
     elif share.auth == "guest":
         opts += ["guest", "sec=none"]
+    # password and cortex: credentials travel separately, over the helper's stdin
     return ",".join(opts)
 
 
@@ -128,6 +129,30 @@ def cifs_support() -> list[str]:
     if not which("cifs.upcall"):
         problems.append("cifs.upcall (cifs-utils, with keyutils) is needed for Kerberos mounts")
     return problems
+
+
+def credentials_for(share: Share, password: str | None) -> dict[str, str] | None:
+    """What the helper signs in with: None for Kerberos and guest, else user, domain and password.
+
+    A share with ``auth == "cortex"`` uses the account Cortex keeps and the
+    password Cortex stored in the keyring, so nothing is typed twice.
+    """
+    if share.auth == "password":
+        if not share.username:
+            raise ShareError("Password access needs a user name")
+        return {"username": share.username, "password": password or "", "domain": share.domain}
+    if share.auth == "cortex":
+        from replicate.vhd import cortex_app
+
+        acct = cortex_app.account()
+        if not acct.is_set:
+            raise ShareError("Cortex has no sign-in yet: open Cortex and set your account under Sign-in, or sign in another way here")
+        secret = cortex_app.password(acct)
+        if secret is None:
+            raise ShareError(f"Cortex's password for {acct.display()} could not be read from the keyring (is it unlocked?); "
+                             "open Cortex and save the sign-in again, or use a user name and password here")
+        return {"username": acct.user, "password": secret, "domain": acct.domain}
+    return None
 
 
 def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> str:
@@ -142,13 +167,12 @@ def mount_share(share: Share, password: str | None, *, uid: int, gid: int) -> st
         return folder_path(share)
     args = ["mount-share", parts.unc, target, "--options", mount_options(share, uid=uid, gid=gid)]
     stdin = None
-    if share.auth == "password":
-        if not share.username:
-            raise ShareError("Password access needs a user name")
+    credentials = credentials_for(share, password)
+    if credentials is not None:
         args.append("--credentials-stdin")
-        stdin = json.dumps({"username": share.username, "password": password or "", "domain": share.domain}).encode()
+        stdin = json.dumps(credentials).encode()
     try:
-        nbd._privileged(args, input_data=stdin)  # noqa: SLF001
+        nbd._privileged(args, input_data=stdin)
     except nbd.HostMountError as exc:
         raise ShareError(_explain(str(exc), share)) from exc
     folder = folder_path(share)
@@ -163,7 +187,7 @@ def unmount_share(share: Share) -> None:
     if not is_mounted(share):
         return
     try:
-        nbd._privileged(["umount-share", mountpoint_for(share)])  # noqa: SLF001
+        nbd._privileged(["umount-share", mountpoint_for(share)])
     except nbd.HostMountError as exc:
         raise ShareError(str(exc)) from exc
 
@@ -174,6 +198,8 @@ def _explain(message: str, share: Share) -> str:
         if share.auth == "kerberos":
             return ("The server refused the Kerberos ticket. Check that this computer holds a ticket (Kerberus or kinit), "
                     "that cifs.upcall is installed, and that the share allows your account. " + message)
+        if share.auth == "cortex":
+            return "The server did not accept the sign-in Cortex keeps; check it in Cortex: " + message
         return "The user name or password was not accepted: " + message
     if "no such device" in text or "error(19)" in text:
         return "The kernel has no CIFS support loaded: " + message
@@ -185,6 +211,21 @@ def _explain(message: str, share: Share) -> str:
     return message
 
 
+def default_auth() -> str:
+    """How a new share signs in: with Cortex's account when Cortex has one, else the Kerberos ticket."""
+    from replicate.vhd import cortex_app
+
+    return "cortex" if cortex_app.account().is_set else "kerberos"
+
+
 def share_from_uri(uri: str) -> Share:
     parts = parse_share_url(uri)
-    return Share(url=parts.url, label=re.sub(r"[/\\\\]+", " / ", parts.windows.strip("\\\\")))
+    return Share(url=parts.url, auth=default_auth(), label=re.sub(r"[/\\\\]+", " / ", parts.windows.strip("\\\\")))
+
+
+def share_from_drive(drive, subpath: str = "") -> Share:
+    """A Replicate share for a Cortex drive (optionally a folder inside it), signed in through Cortex."""
+    parts = parse_share_url(drive.path)
+    if subpath:
+        parts.subpath = "/".join(p for p in [parts.subpath, subpath.strip("/\\").replace("\\", "/")] if p)
+    return Share(url=parts.url, auth="cortex", label=drive.name)

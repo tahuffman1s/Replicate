@@ -9,15 +9,15 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk
 
-from replicate import paths  # noqa: E402
-from replicate.host import preflight  # noqa: E402
-from replicate.tasks import Progress, run_in_thread  # noqa: E402
-from replicate.ui.context import AppContext  # noqa: E402
-from replicate.ui.dialogs.create_vm import CreateVmDialog  # noqa: E402
-from replicate.ui.widgets.common import confirm, file_chooser, text_button  # noqa: E402
-from replicate.vm.manager import VIRTIO_WIN_URL, WINDOWS_ISO_PAGE  # noqa: E402
+from replicate import paths
+from replicate.host import preflight
+from replicate.tasks import Progress, run_in_thread
+from replicate.ui.context import AppContext
+from replicate.ui.dialogs.create_vm import CreateVmDialog
+from replicate.ui.widgets.common import confirm, file_chooser, text_button
+from replicate.vm.manager import VIRTIO_WIN_URL, WINDOWS_ISO_PAGE
 
 
 class SettingsPage(Adw.PreferencesPage):
@@ -98,6 +98,19 @@ class SettingsPage(Adw.PreferencesPage):
         g.add(self.kerberus_status)
         self.add(g)
         self._check_kerberus()
+
+        # -- Network drives ------------------------------------------------
+        g = Adw.PreferencesGroup(title="Network drives")
+        g.set_description("Cortex (a network drive manager) finds the shares on your file servers and keeps one sign-in for them. Replicate offers its drives as image sources and mounts them with that sign-in.")
+        self.cortex_status = Adw.ActionRow(use_markup=False, title="Cortex", subtitle="Looking…")
+        self.cortex_status.add_prefix(Gtk.Image.new_from_icon_name("network-workgroup-symbolic"))
+        self.cortex_get_button = text_button("Get Cortex", lambda: Gtk.UriLauncher(uri="https://github.com/tahuffman1s/cortex/releases/latest").launch(self.get_root(), None, None, None))
+        self.cortex_open_button = text_button("Open Cortex", self._open_cortex)
+        self.cortex_status.add_suffix(self.cortex_get_button)
+        self.cortex_status.add_suffix(self.cortex_open_button)
+        g.add(self.cortex_status)
+        self.add(g)
+        self._check_cortex()
 
         # -- Appearance ----------------------------------------------------
         g = Adw.PreferencesGroup(title="Appearance")
@@ -203,6 +216,23 @@ class SettingsPage(Adw.PreferencesPage):
             self.ctx.toast("virtio-win.iso is ready")
 
         run_in_thread(self.ctx.vm.download_virtio_win, dest, progress, on_done=done, on_error=lambda e: self.ctx.toast(f"Download failed: {e} ({VIRTIO_WIN_URL})"), name="virtio-dl")
+
+    def _check_cortex(self) -> None:
+        from replicate.vhd import cortex_app
+
+        def done(text: str) -> None:
+            self.cortex_status.set_subtitle(text)
+            missing = text == "not installed"
+            self.cortex_get_button.set_visible(missing)
+            self.cortex_open_button.set_visible(not missing)
+
+        run_in_thread(cortex_app.describe, on_done=done, on_error=lambda e: self.cortex_status.set_subtitle(str(e)), name="cortex")
+
+    def _open_cortex(self) -> None:
+        from replicate.vhd import cortex_app
+
+        if not cortex_app.show():
+            self.ctx.toast("Cortex could not be started")
 
     def _check_kerberus(self) -> None:
         from replicate.sql import kerberos, kerberus_app

@@ -143,4 +143,7 @@ def preflight(vm_uri: str) -> Preflight:
 
     for problem in shares.cifs_support():
         result.notes.append(f"Network shares: {problem}")
+    from replicate.vhd import cortex_app
+
+    result.notes.append(f"Cortex (network drives): {cortex_app.describe()}")
     return result

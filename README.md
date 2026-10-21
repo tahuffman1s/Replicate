@@ -258,6 +258,23 @@ host (`mount.cifs`, and `cifs.upcall` with `keyutils` for Kerberos); on
 Fedora and Rocky also `setsebool -P virt_use_samba on` so the VM may read
 the share.
 
+**With Cortex.** [Cortex](https://github.com/tahuffman1s/cortex) is a
+network drive manager for the same desktops: it finds the shares on your
+file servers, keeps the ones you use as drives and holds one sign-in for all
+of them in your keyring. Replicate works with it in three ways. The drives
+Cortex keeps are listed in *Add share…*, so a share you already have there
+is one click here. A share can sign in with *the sign-in Cortex keeps*
+(the default when Cortex has one): Replicate reads the account from
+Cortex's files and its password from the keyring entry Cortex stored, and
+hands them to the mount helper over stdin, so the password is typed once,
+in Cortex. And while Cortex has a drive connected, that drive is readable
+through gvfsd-fuse, so images on it show up in the scan right away, marked
+*via Cortex*; attaching one leads to mounting the share with Replicate,
+because the VM, containers and the helper cannot read a desktop
+connection. Replicate never writes Cortex's files: drives and the sign-in
+are managed in Cortex, and *Settings → Network drives* says what Cortex
+holds and opens it.
+
 ### When an image does not show up
 
 The Images page says what the last scan went through (folders, files, how
