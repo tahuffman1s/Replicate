@@ -31,7 +31,7 @@ class AddContainerDialog(Adw.Dialog):
             "Databases live under the data directory in Settings and survive the container being recreated. "
             "The sa password is generated and kept in your keyring."
         )
-        existing = {c.name for c in ctx.containers.status_map()}
+        existing = set(ctx.containers.status_map())  # container name -> status
         n = 1
         while f"sql{n}" in existing:
             n += 1

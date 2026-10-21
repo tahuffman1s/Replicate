@@ -47,9 +47,28 @@ def snap(name: str) -> None:
     print("saved", name)
 
 
+def open_dialogs() -> None:
+    """Construct the dialogs that need a Docker daemon in real life, against a fake one."""
+    ctx = app.ctx
+    ctx.containers.status_map = lambda: {"sql1": "running", "sql2": "exited"}  # type: ignore[method-assign]
+    from replicate.ui.dialogs.container import AddContainerDialog
+    from replicate.ui.dialogs.restore import AttachDialog
+    from replicate.vhd.images import ImageInfo
+
+    for dialog in (AddContainerDialog(ctx), AttachDialog(ctx, ImageInfo(path="/tmp/x.vhdx", format="vhdx", virtual_size=1 << 30))):
+        dialog.present(app.window)
+        dialog.close()
+    print("dialogs ok")
+
+
 def step(i: int = 0) -> bool:
     if i == 0 and narrow:
         app.window.set_default_size(640, 760)
+    if i == 0:
+        try:
+            open_dialogs()
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"dialogs: {exc!r}")
     if i >= len(PAGES):
         app.quit()
         return False
