@@ -61,7 +61,19 @@ def dialog_header(dialog: Adw.Dialog, action_label: str, on_action: Callable[[],
     header.pack_start(cancel)
     action = Gtk.Button(label=action_label)
     action.add_css_class("destructive-action" if destructive else "suggested-action")
-    action.connect("clicked", lambda *_: on_action())
+
+    def run_action(*_args) -> None:
+        # A mistake in a handler must show up, not leave the dialog looking busy.
+        try:
+            on_action()
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception("dialog action failed")
+            action.set_sensitive(True)
+            error_dialog(dialog, "Something went wrong", f"{type(exc).__name__}: {exc}")
+
+    action.connect("clicked", run_action)
     header.pack_end(action)
     dialog.set_default_widget(action)
     return header, action

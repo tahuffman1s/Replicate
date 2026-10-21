@@ -60,10 +60,13 @@ def run_in_thread(
     on_done: Callable[[Any], None] | None = None,
     on_error: Callable[[BaseException], None] | None = None,
     name: str | None = None,
+    **kwargs: Any,
 ) -> threading.Thread:
+    """Run ``work(*args, **kwargs)`` on a thread; every other keyword goes to ``work``."""
+
     def _runner() -> None:
         try:
-            result = work(*args)
+            result = work(*args, **kwargs)
         except BaseException as exc:  # noqa: BLE001
             log.debug("background task %s failed:\n%s", name or work.__name__, traceback.format_exc())
             if on_error:
