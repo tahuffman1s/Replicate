@@ -69,7 +69,7 @@ def build_windows_auth(server: SqlServer, password: str, host: str, port: int):
 
 class SqlConnection:
     def __init__(self, server: SqlServer, password: str, host: str, *, timeout: float = 15, database: str | None = None,
-                 query_timeout: int = 0):
+                 query_timeout: float | None = None):
         if pytds is None:
             raise SqlError("python-tds is not installed")
         self.server = server
@@ -83,7 +83,9 @@ class SqlConnection:
             "user": user,
             "password": password,
             "login_timeout": timeout,
-            "timeout": query_timeout,  # 0: no limit; restores can take hours
+            # None means no query timeout (pytds puts this straight on the socket; 0 would make it
+            # non-blocking and every query would fail with "Resource temporarily unavailable").
+            "timeout": query_timeout,
             "appname": "Replicate",
             "autocommit": True,
             "as_dict": True,

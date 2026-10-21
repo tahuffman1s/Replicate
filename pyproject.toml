@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "replicate"
-version = "0.2.5"
+version = "0.2.6"
 description = "Restore SQL Server databases from VHD images into a locally managed Windows VM"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

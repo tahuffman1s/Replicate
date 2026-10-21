@@ -97,3 +97,26 @@ def test_gssapi_handshake_with_a_stub(monkeypatch):
     assert auth.handle_next(b"server-token") == b""
     assert steps == [None, b"server-token"]
     assert auth._ctx.kwargs["mech"] == "krb5"  # noqa: SLF001
+
+
+def test_connection_arguments_keep_the_socket_blocking(monkeypatch):
+    """pytds applies the query timeout to the socket itself; it must be None, never 0."""
+    from replicate.sql import connection
+
+    captured = {}
+
+    class FakeConn:
+        def close(self):
+            pass
+
+    def fake_connect(**kwargs):
+        captured.update(kwargs)
+        return FakeConn()
+
+    monkeypatch.setattr(connection.pytds, "connect", fake_connect)
+    server = SqlServer(name="s", host="sql01", port=1433, auth="sql", username="u")
+    connection.SqlConnection(server, "pw", "sql01")
+    assert captured["timeout"] is None
+    assert captured["login_timeout"] == 15
+    assert captured["port"] == 1433 and captured["server"] == "sql01"
+    assert captured["user"] == "u" and captured["password"] == "pw" and captured["appname"] == "Replicate"
