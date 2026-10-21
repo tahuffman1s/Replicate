@@ -29,7 +29,8 @@ Replicate is a GTK 4 / libadwaita desktop app. It is free software
   with no network and no Windows password.
 - **Takes VHD and VHDX images and makes databases out of them.** Point it at a
   folder of images: Hyper-V disks, `New-VHD` files, qcow2 or raw images,
-  anything that holds data files or backups. Attaching makes a copy-on-write clone (a qcow2 overlay; the image
+  anything that holds data files or backups, in any subfolder, with or
+  without a file extension (the format is read from the file itself). Attaching makes a copy-on-write clone (a qcow2 overlay; the image
   is never written to) and hot-plugs it into the VM. Windows brings the disk
   online, Replicate lists the `.mdf`/`.ldf`/`.ndf` and `.bak` files on it, and
   attaches the data files in place or restores the backups, with the names you

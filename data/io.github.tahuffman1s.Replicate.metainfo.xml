@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.4" date="2026-10-21">
+      <description>
+        <p>Images are recognised by their contents, so VHD, VHDX, qcow2, VDI, VMDK and raw disks are found without a file extension.</p>
+      </description>
+    </release>
     <release version="0.2.3" date="2026-10-21">
       <description>
         <p>Image folders are searched all the way down, so images nested in subfolders are found; the list shows each image's folder.</p>

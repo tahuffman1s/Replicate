@@ -121,3 +121,24 @@ def test_scan_finds_nested_images_and_reports_their_folder(tmp_path):
     assert found[0].root == str(root)
     assert scan([str(root)], max_depth=2) == []
     assert [i.name for i in scan([str(root)], max_depth=5)] == ["Sales.vhdx"]
+
+
+@pytest.mark.skipif(qemu_img is None, reason="qemu-img not installed")
+def test_scan_detects_images_without_an_extension(tmp_path):
+    from replicate.vhd.images import sniff_format
+
+    root = tmp_path / "share"
+    (root / "a1b2").mkdir(parents=True)
+    subprocess.run([qemu_img, "create", "-q", "-f", "vhdx", str(root / "a1b2" / "image"), "16M"], check=True)
+    subprocess.run([qemu_img, "create", "-q", "-f", "vpc", str(root / "legacy-no-ext"), "16M"], check=True)
+    subprocess.run([qemu_img, "create", "-q", "-f", "qcow2", str(root / "disk.bin.old"), "16M"], check=True)
+    (root / "notes").write_bytes(b"not an image" * 200000)  # 2.4 MB of text, no extension
+    (root / "big.log").write_bytes(b"\0" * (2 << 20))
+    found = {i.name: i.format for i in scan([str(root)])}
+    assert found == {"image": "vhdx", "legacy-no-ext": "vpc", "disk.bin.old": "qcow2"}
+    assert sniff_format(root / "notes") is None
+    assert sniff_format(root / "a1b2" / "image") == "vhdx"
+    # Less than a sector is never an image.
+    (root / "tiny").write_bytes(b"vhdxfile")
+    assert sniff_format(root / "tiny") is None
+    assert (root / "legacy-no-ext").stat().st_size < 4096  # a fresh dynamic VHD really is this small

@@ -15,6 +15,55 @@ from pathlib import Path
 from replicate.util import CommandError, run, which
 
 IMAGE_SUFFIXES = {".vhd", ".vhdx", ".avhd", ".avhdx", ".qcow2", ".img", ".raw", ".vdi", ".vmdk"}
+# Files with these extensions are never disk images; everything else without a
+# known image extension gets its first and last bytes looked at.
+NOT_IMAGE_SUFFIXES = {
+    ".txt", ".log", ".md", ".json", ".xml", ".yml", ".yaml", ".ini", ".cfg", ".conf", ".csv", ".html", ".htm", ".pdf",
+    ".bak", ".trn", ".dif", ".mdf", ".ndf", ".ldf", ".zip", ".7z", ".gz", ".xz", ".bz2", ".tar", ".rar", ".iso",
+    ".exe", ".dll", ".msi", ".ps1", ".bat", ".cmd", ".sh", ".py", ".sql", ".doc", ".docx", ".xls", ".xlsx", ".png",
+    ".jpg", ".jpeg", ".gif", ".svg", ".mp4", ".mkv", ".avi", ".wav", ".mp3", ".lnk", ".url", ".db", ".sqlite",
+    ".pyc", ".o", ".so", ".a", ".jar", ".class", ".bin", ".dat", ".tmp", ".part", ".lock", ".nbd",
+}
+SNIFF_MIN_SIZE = 512  # a fresh dynamic VHD is only a few KB, so anything with a sector gets a look
+
+
+def sniff_format(path: str | Path, size: int | None = None) -> str | None:
+    """The image format a file's bytes say it is, or None.
+
+    Two small reads per file (its first KiB and last 512 bytes), so looking
+    at every unknown file on a share costs little more than listing it.
+
+    VHDX starts with ``vhdxfile``; a VHD ends with a ``conectix`` footer
+    (dynamic ones carry a copy at the start too); qcow2 starts with
+    ``QFI\\xfb``; VDI with its banner; VMDK with ``KDMV`` or a text
+    descriptor; a raw disk with a GPT header at 512 or an MBR signature.
+    """
+    try:
+        if size is None:
+            size = os.stat(path).st_size
+        if size < SNIFF_MIN_SIZE:
+            return None
+        with open(path, "rb") as fh:
+            head = fh.read(1024)
+            fh.seek(-512, os.SEEK_END)
+            tail = fh.read(512)
+    except OSError:
+        return None
+    if head.startswith(b"vhdxfile"):
+        return "vhdx"
+    if head.startswith(b"conectix") or tail.startswith(b"conectix"):
+        return "vpc"
+    if head.startswith(b"QFI\xfb"):
+        return "qcow2"
+    if head.startswith(b"<<< ") and b"VirtualBox Disk Image" in head[:64]:
+        return "vdi"
+    if head.startswith(b"KDMV") or head.startswith(b"# Disk DescriptorFile"):
+        return "vmdk"
+    if head[512:520] == b"EFI PART":
+        return "raw"
+    if head[510:512] == b"\x55\xaa" and any(head[446 + 16 * i + 4] not in (0, 0xEE) or head[446 + 16 * i + 4] == 0xEE for i in range(4) if head[446 + 16 * i + 4]):
+        return "raw"
+    return None
 FORMAT_LABELS = {"vpc": "VHD", "vhdx": "VHDX", "qcow2": "QCOW2", "raw": "Raw", "vdi": "VDI", "vmdk": "VMDK"}
 
 
@@ -123,15 +172,28 @@ def scan(directories: list[str], *, include_clones: bool = False, max_depth: int
                 dirnames[:] = []
             dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIR_NAMES)
             for filename in filenames:
-                if Path(filename).suffix.lower() not in IMAGE_SUFFIXES:
-                    continue
+                suffix = Path(filename).suffix.lower()
                 full = str(Path(dirpath) / filename)
+                detected = None
+                if suffix not in IMAGE_SUFFIXES:
+                    # No image extension (or none at all): look inside, unless the name says it cannot be one.
+                    if suffix in NOT_IMAGE_SUFFIXES or filename.startswith("."):
+                        continue
+                    try:
+                        size = os.stat(full).st_size
+                    except OSError:
+                        continue
+                    detected = sniff_format(full, size)
+                    if detected is None:
+                        continue
                 real = os.path.realpath(full)
                 if real in seen:
                     continue
                 seen.add(real)
                 info = inspect(full)
                 info.root = str(root)
+                if detected and info.format in ("raw", "unknown") and detected != "raw":
+                    info.format = detected
                 if info.is_clone and not include_clones:
                     continue
                 found.append(info)
