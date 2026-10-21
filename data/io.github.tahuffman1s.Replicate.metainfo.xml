@@ -70,6 +70,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.0" date="2026-10-21">
+      <description>
+        <p>SQL Server in Docker containers as an alternative to the VM: create and run containers from the Overview page, attach VHD images to them (mounted on the host through qemu-nbd and NTFS) and restore from them, with a copy-into-the-container fallback.</p>
+      </description>
+    </release>
     <release version="0.1.4" date="2026-10-20">
       <description>
         <p>The AppImage no longer needs libfuse2: it mounts with FUSE 3 or FUSE 2 and extracts itself where there is no FUSE, so it runs on Rocky Linux, Fedora and current Ubuntu as downloaded.</p>

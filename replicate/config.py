@@ -88,9 +88,26 @@ class SqlServer:
     database: str = "master"
     vm_managed: bool = True
     service_name: str = "MSSQLSERVER"  # Windows service, e.g. MSSQL$ACCT
+    backend: str = ""  # "vm", "docker" or "" (a server somewhere else); "" + vm_managed means "vm"
+    container: str = ""  # Docker container name when backend == "docker"
     linked_to: list[str] = field(default_factory=list)  # ids of linked servers
     notes: str = ""
     enabled: bool = True
+
+    @property
+    def where(self) -> str:
+        """vm, docker or remote."""
+        if self.backend:
+            return self.backend
+        return "vm" if self.vm_managed else "remote"
+
+    @property
+    def in_docker(self) -> bool:
+        return self.where == "docker"
+
+    @property
+    def in_vm(self) -> bool:
+        return self.where == "vm"
 
     @property
     def account(self) -> str:
@@ -136,6 +153,17 @@ class MonitorSettings:
 
 
 @dataclass
+class DockerSettings:
+    """SQL Server for Linux in containers: no Windows, no VM, but no Windows authentication either."""
+
+    enabled: bool = True
+    engine: str = "docker"  # docker, podman, or auto
+    image: str = "mcr.microsoft.com/mssql/server:2022-latest"
+    data_root: str = str(paths.DATA_DIR / "docker")  # <data_root>/<container>/data -> /var/opt/mssql
+    memory_mib: int = 4096
+
+
+@dataclass
 class KerberosSettings:
     # Hand ticket requests to Kerberus (github.com/tahuffman1s/kerberus) when it is installed.
     use_kerberus: bool = True
@@ -159,13 +187,17 @@ class AppConfig:
     vhd: VhdSettings = field(default_factory=VhdSettings)
     monitor: MonitorSettings = field(default_factory=MonitorSettings)
     kerberos: KerberosSettings = field(default_factory=KerberosSettings)
+    docker: DockerSettings = field(default_factory=DockerSettings)
     ui: UiSettings = field(default_factory=UiSettings)
 
     def server(self, server_id: str) -> SqlServer | None:
         return next((s for s in self.servers if s.id == server_id), None)
 
     def vm_servers(self) -> list[SqlServer]:
-        return [s for s in self.servers if s.vm_managed]
+        return [s for s in self.servers if s.in_vm]
+
+    def docker_servers(self) -> list[SqlServer]:
+        return [s for s in self.servers if s.in_docker]
 
 
 # --------------------------------------------------------------------------
@@ -191,6 +223,10 @@ class Mount:
     target_dev: str = ""  # vdb, vdc, ...
     serial: str = ""
     drive_letters: list[str] = field(default_factory=list)
+    backend: str = "vm"  # "vm": hot-plugged into the VM; "docker": mounted on the host for a container
+    container: str = ""  # the container it was mounted for
+    host_dir: str = ""  # where the helper mounted it on the host (backend docker)
+    mountpoints: list[str] = field(default_factory=list)
     databases: list[RestoredDatabase] = field(default_factory=list)
     created_at: str = ""
     label: str = ""
@@ -249,7 +285,7 @@ def _coerce(ftype: Any, value: Any) -> Any:
     return value
 
 
-for _cls in (VmSettings, SqlServer, VhdSettings, MonitorSettings, KerberosSettings, UiSettings, RestoredDatabase, Mount):
+for _cls in (VmSettings, SqlServer, VhdSettings, MonitorSettings, KerberosSettings, DockerSettings, UiSettings, RestoredDatabase, Mount):
     _NESTED[_cls.__name__] = _cls
 
 

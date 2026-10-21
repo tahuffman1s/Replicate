@@ -85,7 +85,7 @@ class Mounter:
 
     # -- queries -----------------------------------------------------------
     def mounts(self) -> list[Mount]:
-        return [m for m in self.state.mounts if m.vm_name == self.vm.vm.name]
+        return [m for m in self.state.mounts if m.backend == "vm" and m.vm_name == self.vm.vm.name]
 
     def mount_for_clone(self, clone_path: str) -> Mount | None:
         return next((m for m in self.state.mounts if m.clone_path == clone_path), None)

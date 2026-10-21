@@ -73,6 +73,17 @@ class SettingsPage(Adw.PreferencesPage):
                     lambda v: setattr(m, "trace_exclude_apps", [x.strip() for x in v.split(",") if x.strip()]))
         self.add(g)
 
+        # -- Docker --------------------------------------------------------
+        g = Adw.PreferencesGroup(title="SQL Server in Docker")
+        g.set_description("Containers run SQL Server for Linux: no VM, but no Windows authentication either.")
+        d = ctx.config.docker
+        self._switch(g, "Offer containers", "Show the Docker section on the Overview page", d.enabled, lambda v: setattr(d, "enabled", v))
+        self._entry(g, "Engine command (docker, podman or auto)", d.engine, lambda v: setattr(d, "engine", v.strip() or "docker"))
+        self._entry(g, "Image for new containers", d.image, lambda v: setattr(d, "image", v.strip() or "mcr.microsoft.com/mssql/server:2022-latest"))
+        self._spin(g, "Memory limit for new containers (MiB)", d.memory_mib, 1024, 262144, 512, lambda v: setattr(d, "memory_mib", int(v)))
+        self._folder_row(g, "Data directory", d.data_root, lambda v: setattr(d, "data_root", v), "Each container keeps /var/opt/mssql and its mounted images under here")
+        self.add(g)
+
         # -- Kerberos ------------------------------------------------------
         g = Adw.PreferencesGroup(title="Kerberos")
         g.set_description("Windows authentication with the ticket this computer holds. Kerberus (a ticket manager) keeps tickets renewed and can sign in for Replicate.")

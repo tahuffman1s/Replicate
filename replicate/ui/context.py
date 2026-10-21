@@ -9,8 +9,10 @@ from typing import Any
 
 from replicate import paths
 from replicate.config import AppConfig, AppState, load_config, load_state, save_config, save_state
+from replicate.docker.manager import ContainerManager
 from replicate.secrets import SecretStore
 from replicate.sql.servers import ServerRegistry
+from replicate.vhd.docker_mounter import DockerMounter
 from replicate.vhd.mounter import Mounter
 from replicate.vm.manager import VmManager, VmStatus
 
@@ -20,6 +22,7 @@ log = logging.getLogger(__name__)
 VM_STATUS = "vm-status"  # payload: VmStatus
 SERVERS_CHANGED = "servers-changed"
 MOUNTS_CHANGED = "mounts-changed"
+CONTAINERS_CHANGED = "containers-changed"
 CONFIG_CHANGED = "config-changed"
 INSTALL_PROGRESS = "install-progress"  # payload: (message, fraction)
 TOAST = "toast"  # payload: str
@@ -34,6 +37,9 @@ class AppContext:
         self.vm = VmManager(self.config, self.state, self.secrets)
         self.registry = ServerRegistry(self.config, self.secrets, self.vm)
         self.mounter = Mounter(self.vm, self.state, self.config.vhd.clones_dir)
+        self.containers = ContainerManager(self.config, self.state, self.secrets)
+        self.docker_mounter = DockerMounter(self.containers, self.state, self.config.vhd.clones_dir)
+        self.docker_mounter.reconcile()
         self.last_status: VmStatus = VmStatus()
         self._subs: dict[str, list[Callable[..., Any]]] = defaultdict(list)
 
@@ -41,6 +47,7 @@ class AppContext:
     def save_config(self) -> None:
         save_config(self.config)
         self.mounter.clones_dir = self.config.vhd.clones_dir
+        self.docker_mounter.clones_dir = self.config.vhd.clones_dir
         self.emit(CONFIG_CHANGED)
 
     def save_state(self) -> None:

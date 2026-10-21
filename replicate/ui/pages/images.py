@@ -12,7 +12,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 
 from replicate.config import Mount  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
-from replicate.ui.context import CONFIG_CHANGED, MOUNTS_CHANGED, AppContext  # noqa: E402
+from replicate.ui.context import CONFIG_CHANGED, CONTAINERS_CHANGED, MOUNTS_CHANGED, AppContext  # noqa: E402
 from replicate.ui.dialogs.restore import AttachDialog, RestoreDialog, detach_mount  # noqa: E402
 from replicate.ui.widgets.common import confirm, file_chooser, icon_button, status_label, status_page, text_button  # noqa: E402
 from replicate.util import human_size  # noqa: E402
@@ -75,6 +75,7 @@ class ImagesPage(Gtk.ScrolledWindow):
         self.clone_rows: list[Gtk.Widget] = []
 
         ctx.subscribe(MOUNTS_CHANGED, self.refresh_mounts)
+        ctx.subscribe(CONTAINERS_CHANGED, self.refresh_mounts)
         ctx.subscribe(CONFIG_CHANGED, self._refresh_folders)
         self._refresh_folders()
         self.refresh_mounts()
@@ -86,7 +87,7 @@ class ImagesPage(Gtk.ScrolledWindow):
 
     # -- folders ------------------------------------------------------------
     def _update_empty(self) -> None:
-        has_anything = bool(self.ctx.config.vhd.image_dirs or self.ctx.mounter.mounts() or cl.list_clones(self.ctx.config.vhd.clones_dir))
+        has_anything = bool(self.ctx.config.vhd.image_dirs or self.ctx.mounter.mounts() or self.ctx.docker_mounter.mounts() or cl.list_clones(self.ctx.config.vhd.clones_dir))
         self.switcher.set_visible_child_name("content" if has_anything else "empty")
 
     def on_refresh(self) -> None:
@@ -172,7 +173,7 @@ class ImagesPage(Gtk.ScrolledWindow):
             self.images_group.add(row)
             self.image_rows.append(row)
             return
-        attached_images = {m.image_path for m in self.ctx.mounter.mounts()}
+        attached_images = {m.image_path for m in self.ctx.mounter.mounts() + self.ctx.docker_mounter.mounts()}
         for img in self.images:
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(img.modified)) if img.modified else ""
             subtitle = f"{img.format_label} · {human_size(img.virtual_size)} virtual · {human_size(img.actual_size)} on disk · {when}\n{img.path}"
@@ -197,13 +198,16 @@ class ImagesPage(Gtk.ScrolledWindow):
         for row in self.mount_rows:
             self.mounts_group.remove(row)
         self.mount_rows.clear()
-        mounts = self.ctx.mounter.mounts()
+        mounts = self.ctx.mounter.mounts() + self.ctx.docker_mounter.mounts()
         if not mounts:
             row = Adw.ActionRow(use_markup=False, title="Nothing attached", subtitle="Pick an image below and attach it.")
             self.mounts_group.add(row)
             self.mount_rows.append(row)
         for m in mounts:
-            letters = ", ".join(f"{x}:" for x in m.drive_letters) or f"{m.target_dev} (not online yet)"
+            if m.backend == "docker":
+                letters = f"container {m.container}: " + (", ".join(m.drive_letters) or "not mounted")
+            else:
+                letters = ", ".join(f"{x}:" for x in m.drive_letters) or f"{m.target_dev} (not online yet)"
             dbs = ", ".join(f"{d.name} ({d.mode})" for d in m.databases) or "no databases yet"
             row = Adw.ActionRow(use_markup=False, title=m.label, subtitle=f"{letters} · {'direct' if m.is_direct else 'clone'} of {m.image_path}\n{dbs}")
             row.set_subtitle_lines(2)
@@ -215,6 +219,12 @@ class ImagesPage(Gtk.ScrolledWindow):
         self._render_images()
 
     def _restore(self, mount: Mount) -> None:
+        if mount.backend == "docker":
+            if self.ctx.containers.status_map().get(mount.container) != "running":
+                self.ctx.toast(f"Start the container {mount.container} first (Overview page)")
+                return
+            RestoreDialog(self.ctx, mount).present(self.get_root())
+            return
         status = self.ctx.last_status
         if not (status.running and status.agent):
             self.ctx.toast("Start the VM first; the disk is online only while Windows runs")
@@ -241,7 +251,9 @@ class ImagesPage(Gtk.ScrolledWindow):
                 on_error=lambda e: (self.ctx.toast(f"Detach failed: {e}"), self.ctx.emit(MOUNTS_CHANGED)),
             )
 
-        confirm(self, f"Detach {mount.label}?", "The disk disappears from Windows. Databases still attached from it would go suspect, so detach them too.", "Detach", go, extra=box)
+        body = ("The image is unmounted from this computer. Databases still attached from it would go suspect, so detach them too."
+                if mount.backend == "docker" else "The disk disappears from Windows. Databases still attached from it would go suspect, so detach them too.")
+        confirm(self, f"Detach {mount.label}?", body, "Detach", go, extra=box)
 
     # -- clones -------------------------------------------------------------
     def refresh_clones(self) -> None:

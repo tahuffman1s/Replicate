@@ -64,7 +64,7 @@ class ServersPage(Gtk.ScrolledWindow):
             self.group.add(self._make_row(server))
 
     def _make_row(self, server: SqlServer) -> Adw.ActionRow:
-        where = "Replicate VM" if server.vm_managed else server.host
+        where = "Replicate VM" if server.in_vm else (f"Docker {server.container}" if server.in_docker else server.host)
         instance = f"\\{server.instance}" if server.instance else ""
         port = f":{server.port}" if server.port else ""
         links = ""
@@ -74,7 +74,7 @@ class ServersPage(Gtk.ScrolledWindow):
         row = Adw.ActionRow(use_markup=False, title=server.name, subtitle=f"{where}{instance}{port} · {server.account or 'this computer\'s ticket'} ({server.auth_label}){links}")
         row.set_activatable(True)
         row.connect("activated", lambda *_: self._on_edit(server))
-        row.add_prefix(Gtk.Image.new_from_icon_name("network-server-symbolic" if not server.vm_managed else "computer-symbolic"))
+        row.add_prefix(Gtk.Image.new_from_icon_name("computer-symbolic" if server.in_vm else ("replicate-clone-symbolic" if server.in_docker else "network-server-symbolic")))
         text, kind = self._status.get(server.id, ("", "neutral"))
         pill = status_label(text or "not checked", kind)
         row.add_suffix(pill)

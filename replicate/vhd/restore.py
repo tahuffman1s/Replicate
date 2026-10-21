@@ -141,3 +141,28 @@ def drop_database(conn: SqlConnection, name: str) -> None:
 def database_files(conn: SqlConnection, name: str) -> list[str]:
     rows = conn.query(f"SELECT physical_name FROM sys.master_files WHERE database_id = DB_ID({qs(name)})")
     return [r["physical_name"] for r in rows]
+
+
+# -- SQL Server for Linux in a container ----------------------------------------
+
+CONTAINER_IMPORT_DIR = "/var/opt/mssql/data/replicate"
+
+
+def looks_like_io_refusal(error: str) -> bool:
+    """SQL Server on Linux could not open the file where it is (FUSE, O_DIRECT, permissions)."""
+    text = error.lower()
+    return any(key in text for key in ("operating system error", "unable to open the physical file", "cannot open backup device", "access is denied", "error 22", "error 13"))
+
+
+def copy_into_container(docker, container: str, host_files: list[str], database: str) -> list[str]:
+    """``docker cp`` files into the instance's data directory; returns their paths inside."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", database) or "db"
+    target = f"{CONTAINER_IMPORT_DIR}/{safe}"
+    docker.exec(container, "mkdir", "-p", target, user="root")
+    inside = []
+    for host_path in host_files:
+        name = PureWindowsPath(host_path).name
+        docker.copy_in(container, host_path, f"{target}/{name}")
+        inside.append(f"{target}/{name}")
+    docker.exec(container, "chown", "-R", "10001:0", target, user="root")
+    return inside

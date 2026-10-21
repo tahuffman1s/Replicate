@@ -58,6 +58,8 @@ class ServerRegistry:
 
     # -- connections ---------------------------------------------------------
     def resolve_host(self, server: SqlServer, *, refresh: bool = False) -> str:
+        if server.in_docker:
+            return server.host.strip() or "127.0.0.1"
         if server.host.strip().lower() != "vm":
             return server.host.strip()
         if refresh or not self._vm_ip:
@@ -108,15 +110,21 @@ class ServerRegistry:
         base = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in target.name).strip("_") or target.id
         return base[:100]
 
-    def data_source(self, target: SqlServer, *, from_vm: bool) -> str:
+    def data_source(self, target: SqlServer, *, from_vm: bool = False, source: SqlServer | None = None) -> str:
         """How the source server reaches the target.
 
-        Two instances inside the VM talk to each other over loopback, which
-        is what a Replicate-created VM is set up for. Otherwise the host name
-        as Replicate sees it, with the fixed port.
+        Two instances inside the VM talk over loopback; two containers talk
+        over the shared "replicate" Docker network by container name; a
+        container reaches a server on the host through host.docker.internal.
+        Otherwise the host name as Replicate sees it, with the fixed port.
         """
-        if from_vm and target.vm_managed:
+        source_where = source.where if source is not None else ("vm" if from_vm else "remote")
+        if source_where == "docker" and target.in_docker:
+            return f"{target.container},1433"
+        if source_where == "vm" and target.in_vm:
             host = "localhost"
+        elif source_where == "docker" and self.resolve_host(target) in ("127.0.0.1", "localhost", "::1"):
+            host = "host.docker.internal"
         else:
             host = self.resolve_host(target)
         if target.port:
@@ -134,7 +142,7 @@ class ServerRegistry:
     def add_link(self, source: SqlServer, target: SqlServer) -> str:
         """Create a linked server on ``source`` pointing at ``target`` and remember it."""
         name = self.link_name(target)
-        data_source = self.data_source(target, from_vm=source.vm_managed)
+        data_source = self.data_source(target, source=source)
         remote_user = target.username if target.auth == "sql" else None
         remote_password = self.password(target) if target.auth == "sql" else None
         sql = [

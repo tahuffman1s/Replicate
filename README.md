@@ -34,6 +34,15 @@ Replicate is a GTK 4 / libadwaita desktop app. It is free software
   online, Replicate lists the `.mdf`/`.ldf`/`.ndf` and `.bak` files on it, and
   attaches the data files in place or restores the backups, with the names you
   choose. Many clones of one image cost nothing until they are written to.
+- **Or skips the VM and runs SQL Server in Docker.** *Add Container* on the
+  Overview page pulls Microsoft's SQL Server 2022 for Linux image, starts it
+  with a generated `sa` password, publishes it on a local port and registers
+  it as a server. Images attach to a container too: the clone is mounted on
+  the Linux host (`qemu-nbd` plus the kernel's NTFS driver) inside a
+  directory the container sees, and the databases are attached or restored
+  from there; when SQL Server on Linux cannot open files where they are,
+  Replicate copies them into the container instead. Windows authentication
+  is the one thing containers cannot do.
 - **Keeps a server list that is yours.** Instances inside the VM register
   themselves. Add any other SQL Server you can reach, with a SQL login, a
   Windows account and password, or the Kerberos ticket your Linux desktop
@@ -180,6 +189,33 @@ registers itself when its service account is allowed to; the dialog has a
 field to override the SPN when it is not. The Replicate VM's own instances
 accept Kerberos once you join that VM to a domain; until then use the SQL
 login the setup created, or a Windows account with the VM's name as domain.
+
+### SQL Server in Docker, without the VM
+
+Docker (or Podman) has to be installed with your user allowed to use it
+(`sudo usermod -aG docker $USER` on most distributions). Each container is
+`mcr.microsoft.com/mssql/server:2022-latest` (changeable in *Settings →
+Docker*) with:
+
+- `/var/opt/mssql` on a directory under `~/.local/share/replicate/docker/<name>/data`,
+  so databases survive removing and recreating the container;
+- `/mnt/replicate` bound to `.../<name>/mounts` with slave propagation, so
+  an image mounted on the host after the container started is visible inside;
+- a port on `127.0.0.1` only, `sa` as the login (password in your keyring),
+  and a shared `replicate` Docker network so containers can be linked to each
+  other by name.
+
+Attaching an image for a container makes the usual copy-on-write clone, then
+asks for your administrator password once to run the mount helper
+(`replicate/vhd/mount_helper.py`, through polkit): it connects the clone to a
+free `/dev/nbd` device with `qemu-nbd`, mounts every NTFS, ext4, XFS or exFAT
+partition on it under the container's mounts directory owned by the `mssql`
+user, and lists the database files. The restore dialog then attaches `.mdf`
+files in place or restores `.bak` files, exactly as for the VM. Attaching in
+place needs the kernel `ntfs3` driver (Linux 5.15 or newer); with the older
+FUSE `ntfs-3g` driver SQL Server cannot open the files directly, and Replicate
+copies them into the container's data directory and attaches those instead
+(tick *Copy the files into the container* to do that from the start).
 
 ### How clones work
 

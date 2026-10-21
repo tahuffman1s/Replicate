@@ -127,6 +127,16 @@ def preflight(vm_uri: str) -> Preflight:
         ok, message = Virsh(vm_uri).connection_ok()
         if not ok:
             result.problem(message)
+    else:
+        pass  # already a problem above
     if not which("virt-viewer", "remote-viewer", "virt-manager"):
         result.notes.append("Install virt-viewer to open the VM's screen from Replicate")
+    from replicate.docker.engine import Docker
+    from replicate.vhd import nbd
+
+    ok, message = Docker("auto").ping()
+    if not ok:
+        result.notes.append(f"Docker: {message} (needed only for SQL Server in containers)")
+    for problem in nbd.host_support():
+        result.notes.append(f"Images for containers: {problem}")
     return result

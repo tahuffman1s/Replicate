@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 class AttachDialog(Adw.Dialog):
     def __init__(self, ctx: AppContext, image: ImageInfo):
-        super().__init__(title="Attach to the VM", content_width=520)
+        super().__init__(title="Attach image", content_width=520)
         self.ctx = ctx
         self.image = image
         view = Adw.ToolbarView()
@@ -39,6 +39,14 @@ class AttachDialog(Adw.Dialog):
         page.add(info)
 
         how = Adw.PreferencesGroup(title="How")
+        self.targets: list[tuple[str, str]] = [("vm", f"The VM ({ctx.config.vm.name})")]
+        for name in sorted(ctx.containers.status_map()):
+            self.targets.append((name, f"Container {name}"))
+        self.target = Adw.ComboRow(title="Attach to")
+        self.target.set_model(Gtk.StringList.new([label for _, label in self.targets]))
+        if not ctx.last_status.defined and len(self.targets) > 1:
+            self.target.set_selected(1)
+        how.add(self.target)
         self.mode = Adw.ComboRow(title="Attach as")
         self.mode.set_model(Gtk.StringList.new(["Copy-on-write clone", "The image itself"]))
         self.mode.set_subtitle("A clone is a small qcow2 file on top of the image, which stays untouched; attaching the image itself writes into it.")
@@ -69,21 +77,35 @@ class AttachDialog(Adw.Dialog):
         clone = self.mode.get_selected() == 0
         label = self.label.get_text().strip()
         readonly = self.readonly.get_active()
-
-        def done(mount: Mount) -> None:
-            self.ctx.emit(MOUNTS_CHANGED)
-            self.close()
-            status = self.ctx.last_status
-            if status.running and status.agent:
-                RestoreDialog(self.ctx, mount).present(self.get_root() or self.ctx_window())
-            else:
-                self.ctx.toast("Attached. Start the VM, then use Restore on the attached image.")
+        target = self.targets[self.target.get_selected()][0]
+        parent = self.get_root() or self.ctx_window()
 
         def failed(exc: BaseException) -> None:
             self.go.set_sensitive(True)
             error_dialog(self, "Could not attach", str(exc))
 
-        run_in_thread(self.ctx.mounter.attach, self.image, clone=clone, label=label, readonly=readonly, on_done=done, on_error=failed, name="attach")
+        if target == "vm":
+            def done(mount: Mount) -> None:
+                self.ctx.emit(MOUNTS_CHANGED)
+                self.close()
+                status = self.ctx.last_status
+                if status.running and status.agent:
+                    RestoreDialog(self.ctx, mount).present(parent)
+                else:
+                    self.ctx.toast("Attached. Start the VM, then use Restore on the attached image.")
+
+            run_in_thread(self.ctx.mounter.attach, self.image, clone=clone, label=label, readonly=readonly, on_done=done, on_error=failed, name="attach")
+            return
+
+        self.ctx.toast("Mounting the image on this computer; your password may be asked for")
+
+        def done_docker(result) -> None:
+            mount, files = result
+            self.ctx.emit(MOUNTS_CHANGED)
+            self.close()
+            RestoreDialog(self.ctx, mount, files=files).present(parent)
+
+        run_in_thread(self.ctx.docker_mounter.attach, self.image, target, clone=clone, label=label, readonly=readonly, on_done=done_docker, on_error=failed, name="attach-docker")
 
     def ctx_window(self):
         from gi.repository import Gtk as _Gtk
@@ -95,11 +117,12 @@ class AttachDialog(Adw.Dialog):
 class RestoreDialog(Adw.Dialog):
     """Bring the disk online in Windows, list what is on it, create databases."""
 
-    def __init__(self, ctx: AppContext, mount: Mount):
+    def __init__(self, ctx: AppContext, mount: Mount, files: list[dict] | None = None):
         super().__init__(title=f"Restore from {mount.label}", content_width=680, content_height=640)
         self.ctx = ctx
         self.mount = mount
-        self.files: list[dict] = []
+        self.docker = mount.backend == "docker"
+        self.files: list[dict] = files or []
         self.attach_plans: list[rs.AttachPlan] = []
         self.backup_plans: list[rs.BackupPlan] = []
         self.plan_rows: list[tuple[Adw.ActionRow, Gtk.CheckButton, Gtk.Entry, object]] = []
@@ -121,15 +144,23 @@ class RestoreDialog(Adw.Dialog):
 
         self.target_group = Adw.PreferencesGroup(title="Target")
         self.server_row = Adw.ComboRow(title="SQL Server instance")
-        self.servers = [s for s in ctx.registry.servers if s.vm_managed] or list(ctx.registry.servers)
+        if self.docker:
+            self.servers = [s for s in ctx.registry.servers if s.in_docker and s.container == mount.container]
+            self.server_row.set_subtitle(f"The container {mount.container} this image is mounted for")
+        else:
+            self.servers = [s for s in ctx.registry.servers if s.in_vm] or list(ctx.registry.servers)
+            self.server_row.set_subtitle("Only an instance inside the VM can see the attached disk")
         self.server_row.set_model(Gtk.StringList.new([s.name for s in self.servers] or ["No servers configured"]))
-        self.server_row.set_subtitle("Only an instance inside the VM can see the attached disk")
         self.target_group.add(self.server_row)
         self.replace = Adw.SwitchRow(use_markup=False, title="Replace a database that already has the same name", subtitle="Drops it first; off by default")
         self.target_group.add(self.replace)
         self.onto_clone = Adw.SwitchRow(use_markup=False, title="Restore .bak files onto this disk", subtitle="Data files go next to the backup instead of the instance's default directories")
         self.onto_clone.set_active(ctx.config.vhd.restore_target == "clone")
+        self.onto_clone.set_visible(not self.docker)
         self.target_group.add(self.onto_clone)
+        self.copy_in = Adw.SwitchRow(use_markup=False, title="Copy the files into the container", subtitle="Instead of using them where they are mounted; done by itself when SQL Server cannot open them there")
+        self.copy_in.set_visible(self.docker)
+        self.target_group.add(self.copy_in)
         self.page.add(self.target_group)
 
         self.plans_group = Adw.PreferencesGroup(title="Databases found")
@@ -149,8 +180,22 @@ class RestoreDialog(Adw.Dialog):
         header.pack_end(refresh)
         self._online()
 
+    def _rescan_docker(self) -> None:
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        if getattr(self, "_scanned_once", False) or not self.files:
+            self.files = self.ctx.docker_mounter.files(self.mount)
+        self._scanned_once = True
+        where = ", ".join(self.mount.drive_letters) or "?"
+        self.status_row.set_title(f"Mounted for {self.mount.container} at {where}")
+        self.status_row.set_subtitle(f"{len(self.files)} database file{'s' if len(self.files) != 1 else ''} found; the container sees them under /mnt/replicate")
+        self._build_plans()
+
     # -- disk -------------------------------------------------------------
     def _online(self) -> None:
+        if self.docker:
+            self._rescan_docker()
+            return
         self.spinner.set_visible(True)
         self.spinner.start()
         self.status_row.set_title("Bringing the disk online in Windows…")
@@ -185,11 +230,19 @@ class RestoreDialog(Adw.Dialog):
         self.attach_plans = rs.plan_attachments(self.files)
         self.backup_plans = rs.plan_backups(self.files)
         already = {d.name.lower() for d in self.mount.databases}
+        def shown(path: str) -> str:
+            if not self.docker:
+                return path
+            try:
+                return self.ctx.docker_mounter.container_path(self.mount, path)
+            except Exception:  # noqa: BLE001
+                return path
+
         for plan in self.attach_plans:
-            self._add_plan_row(plan, "Attach", "\n".join(plan.files), plan.database.lower() not in already)
+            self._add_plan_row(plan, "Attach", "\n".join(shown(f) for f in plan.files), plan.database.lower() not in already)
         for plan in self.backup_plans:
             size = next((f.get("sizeBytes", 0) for f in self.files if f["path"] == plan.backup_file), 0)
-            self._add_plan_row(plan, "Restore", f"{plan.backup_file} ({human_size(size)})", plan.database.lower() not in already)
+            self._add_plan_row(plan, "Restore", f"{shown(plan.backup_file)} ({human_size(size)})", plan.database.lower() not in already)
         if not self.plan_rows:
             row = Adw.ActionRow(use_markup=False, title="No database files found", subtitle="Looked for .mdf/.ldf/.ndf and .bak up to four folders deep.")
             self.plans_group.add(row)
@@ -221,28 +274,67 @@ class RestoreDialog(Adw.Dialog):
             self.ctx.toast("Nothing selected")
             return
         replace = self.replace.get_active()
-        onto_clone = self.onto_clone.get_active()
+        onto_clone = self.onto_clone.get_active() and not self.docker
+        copy_in = self.copy_in.get_active() and self.docker
+        docker_mode = self.docker
+        mount = self.mount
         self.go.set_sensitive(False)
         self.log_label.set_label("")
 
         def work() -> list[tuple[str, str, str | None]]:
+            from replicate.tasks import on_main
+
             results = []
+            docker = self.ctx.containers.docker if docker_mode else None
+
+            def inside(path: str) -> str:
+                return self.ctx.docker_mounter.container_path(mount, path) if docker_mode else path
+
+            def run_attach(plan: rs.AttachPlan, name: str, *, copied: bool) -> list[str]:
+                if docker_mode and copied:
+                    on_main(self._log, "  copying the files into the container")
+                    paths = rs.copy_into_container(docker, mount.container, plan.files, name)
+                else:
+                    paths = [inside(f) for f in plan.files]
+                rs.attach_database(conn, rs.AttachPlan(plan.database, paths), name, replace=replace)
+                return paths
+
+            def run_restore(plan: rs.BackupPlan, name: str, *, copied: bool) -> None:
+                backup = plan.backup_file
+                if docker_mode and copied:
+                    on_main(self._log, "  copying the backup into the container")
+                    backup = rs.copy_into_container(docker, mount.container, [plan.backup_file], name)[0]
+                elif docker_mode:
+                    backup = inside(backup)
+                target_dir = None
+                if onto_clone:
+                    from pathlib import PureWindowsPath
+
+                    target_dir = str(PureWindowsPath(plan.backup_file).parent)
+                rs.restore_database(conn, rs.BackupPlan(plan.database, backup), name, target_dir=target_dir, replace=replace)
+
             with self.ctx.registry.connect(server, timeout=20) as conn:
                 for plan, name in selected:
-                    from replicate.tasks import on_main
-
                     on_main(self._log, f"{plan.source}: {name} …")
                     try:
                         if isinstance(plan, rs.AttachPlan):
-                            rs.attach_database(conn, plan, name, replace=replace)
-                            files = list(plan.files)
+                            try:
+                                files = run_attach(plan, name, copied=copy_in)
+                            except SqlError as exc:
+                                if docker_mode and not copy_in and rs.looks_like_io_refusal(str(exc)):
+                                    on_main(self._log, "  SQL Server cannot open the files where they are mounted; copying instead")
+                                    files = run_attach(plan, name, copied=True)
+                                else:
+                                    raise
                         else:
-                            target_dir = None
-                            if onto_clone:
-                                from pathlib import PureWindowsPath
-
-                                target_dir = str(PureWindowsPath(plan.backup_file).parent)
-                            rs.restore_database(conn, plan, name, target_dir=target_dir, replace=replace)
+                            try:
+                                run_restore(plan, name, copied=copy_in)
+                            except SqlError as exc:
+                                if docker_mode and not copy_in and rs.looks_like_io_refusal(str(exc)):
+                                    on_main(self._log, "  SQL Server cannot read the backup where it is mounted; copying instead")
+                                    run_restore(plan, name, copied=True)
+                                else:
+                                    raise
                             files = rs.database_files(conn, name)
                         self.mount.databases.append(RestoredDatabase(server_id=server.id, name=name, mode=plan.source, files=files))
                         self.ctx.save_state()
@@ -291,10 +383,13 @@ def detach_mount(ctx: AppContext, mount: Mount, *, drop_databases: bool, delete_
                                 rs.drop_database(conn, db.name)
                 except SqlError as exc:
                     log.warning("could not detach databases on %s: %s", server.name, exc)
-                    if ctx.last_status.running:
+                    if ctx.last_status.running or mount.backend == "docker":
                         raise
             mount.databases.clear()
             ctx.save_state()
-        ctx.mounter.detach(mount, delete_clone_file=delete_clone)
+        if mount.backend == "docker":
+            ctx.docker_mounter.detach(mount, delete_clone_file=delete_clone)
+        else:
+            ctx.mounter.detach(mount, delete_clone_file=delete_clone)
 
     run_in_thread(work, on_done=on_done, on_error=on_error, name="detach")

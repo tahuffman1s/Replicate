@@ -12,9 +12,10 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from replicate.host import preflight  # noqa: E402
 from replicate.tasks import run_in_thread  # noqa: E402
-from replicate.ui.context import INSTALL_PROGRESS, MOUNTS_CHANGED, SERVERS_CHANGED, VM_STATUS, AppContext  # noqa: E402
+from replicate.ui.context import CONTAINERS_CHANGED, INSTALL_PROGRESS, MOUNTS_CHANGED, SERVERS_CHANGED, VM_STATUS, AppContext  # noqa: E402
+from replicate.ui.dialogs.container import AddContainerDialog, ContainerLogDialog  # noqa: E402
 from replicate.ui.dialogs.create_vm import CreateVmDialog, resume_install  # noqa: E402
-from replicate.ui.widgets.common import confirm, set_status, status_label, status_page, text_button  # noqa: E402
+from replicate.ui.widgets.common import confirm, set_status, status_label, text_button  # noqa: E402
 from replicate.vm.manager import VmStatus  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -38,21 +39,9 @@ class OverviewPage(Gtk.ScrolledWindow):
         self._preflight = None
         outer.append(self.banner)
 
-        # Either the "nothing here yet" page or the real content.
-        self.switcher = Gtk.Stack()
-        self.switcher.set_vexpand(True)
-        outer.append(self.switcher)
-        self.empty = status_page(
-            "computer-symbolic",
-            "No SQL host VM yet",
-            "Replicate creates a Windows VM with SQL Server for you, in the background. "
-            "Set the Windows ISO and the instance names in Settings first, then create it here.",
-            text_button("Create the VM", self._on_create, css="suggested-action"),
-            text_button("Open Settings", lambda: self.get_root().show_page("settings")),
-        )
-        self.switcher.add_named(self.empty, "empty")
         clamp = Adw.Clamp(maximum_size=900, tightening_threshold=700)
-        self.switcher.add_named(clamp, "content")
+        clamp.set_vexpand(True)
+        outer.append(clamp)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         box.add_css_class("page-content")
         clamp.set_child(box)
@@ -111,9 +100,19 @@ class OverviewPage(Gtk.ScrolledWindow):
         self.services_group.add(self.services_placeholder)
         box.append(self.services_group)
 
+        # SQL Server in Docker
+        self.docker_group = Adw.PreferencesGroup(title="SQL Server in Docker")
+        self.docker_group.set_description("SQL Server for Linux in containers: no VM needed. Start and stop them here; attach images to them from the Images and Clones page.")
+        self.docker_add = text_button("Add Container…", lambda: AddContainerDialog(self.ctx).present(self.get_root()), css="suggested-action")
+        self.docker_group.set_header_suffix(self.docker_add)
+        self.docker_placeholder = Adw.ActionRow(use_markup=False, title="Checking Docker…")
+        self.docker_group.add(self.docker_placeholder)
+        self._container_rows: dict[str, Adw.SwitchRow] = {}
+        box.append(self.docker_group)
+
         # Attached disks
         self.mounts_group = Adw.PreferencesGroup(title="Attached images")
-        self.mounts_group.set_description("Clones and images currently plugged into the VM.")
+        self.mounts_group.set_description("Clones and images plugged into the VM or mounted for a container.")
         go = text_button("Images & Clones", lambda: self.get_root().show_page("images"))
         self.mounts_group.set_header_suffix(go)
         self._mount_rows: list[Gtk.Widget] = []
@@ -123,6 +122,8 @@ class OverviewPage(Gtk.ScrolledWindow):
         ctx.subscribe(INSTALL_PROGRESS, self._on_progress)
         ctx.subscribe(MOUNTS_CHANGED, self._refresh_mounts)
         ctx.subscribe(SERVERS_CHANGED, lambda: self._refresh_services(force=True))
+        ctx.subscribe(CONTAINERS_CHANGED, self._refresh_containers)
+        self._refresh_containers()
         self._on_status(ctx.last_status)
         self._refresh_mounts()
         self._run_preflight()
@@ -165,7 +166,8 @@ class OverviewPage(Gtk.ScrolledWindow):
         set_status(self.status_pill, status.label, kind)
 
         defined = status.defined
-        self.switcher.set_visible_child_name("content" if defined or status.installing else "empty")
+        if not defined and not status.installing:
+            self.vm_sub.set_label("Not created. Replicate can install a Windows VM with SQL Server, in the background; set the Windows ISO in Settings first. Or run SQL Server in Docker below.")
         self.btn_create.set_visible(not defined)
         self.btn_start.set_visible(defined and not status.running and not status.paused)
         self.btn_shutdown.set_visible(status.running)
@@ -318,12 +320,102 @@ class OverviewPage(Gtk.ScrolledWindow):
             name="sql-services-all",
         )
 
+    # -- containers ---------------------------------------------------------
+    def _refresh_containers(self) -> None:
+        manager = self.ctx.containers
+        if not manager.settings.enabled:
+            self.docker_group.set_visible(False)
+            return
+        self.docker_group.set_visible(True)
+
+        def work():
+            ok, message = manager.docker.ping()
+            return ok, message, (manager.containers() if ok else [])
+
+        def done(result) -> None:
+            ok, message, containers = result
+            self.docker_add.set_sensitive(ok)
+            for name, row in list(self._container_rows.items()):
+                if name not in {c.name for c in containers}:
+                    self.docker_group.remove(row)
+                    del self._container_rows[name]
+            if not ok:
+                self.docker_placeholder.set_title("Docker is not available")
+                self.docker_placeholder.set_subtitle(message)
+                self.docker_placeholder.set_visible(True)
+                return
+            self.docker_placeholder.set_visible(not containers)
+            self.docker_placeholder.set_title("No containers yet")
+            self.docker_placeholder.set_subtitle(f"{message} is ready; add a container to get a SQL Server in under a minute.")
+            for c in containers:
+                server = manager.server_for(c.name)
+                title = server.name if server else c.name
+                subtitle = f"{c.status} · port {c.port or (server.port if server else '?')} · {c.image}"
+                row = self._container_rows.get(c.name)
+                if row is None:
+                    row = Adw.SwitchRow(use_markup=False, title=title, subtitle=subtitle)
+                    row.add_prefix(Gtk.Image.new_from_icon_name("replicate-clone-symbolic"))
+                    row.set_active(c.running)
+                    row.connect("notify::active", self._on_container_toggled, c.name)
+                    menu = Gtk.MenuButton(icon_name="view-more-symbolic", valign=Gtk.Align.CENTER)
+                    menu.add_css_class("flat")
+                    popover = Gtk.Popover()
+                    menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                    for label, cb in (("Log…", lambda n=c.name: ContainerLogDialog(self.ctx, n).present(self.get_root())),
+                                      ("Remove…", lambda n=c.name: self._remove_container(n))):
+                        b = Gtk.Button(label=label)
+                        b.add_css_class("flat")
+                        b.get_child().set_xalign(0)
+                        b.connect("clicked", lambda _b, callback=cb: (popover.popdown(), callback()))
+                        menu_box.append(b)
+                    popover.set_child(menu_box)
+                    menu.set_popover(popover)
+                    row.add_suffix(menu)
+                    self._container_rows[c.name] = row
+                    self.docker_group.add(row)
+                else:
+                    row.set_title(title)
+                    row.set_subtitle(subtitle)
+                    if row.get_active() != c.running:
+                        row.handler_block_by_func(self._on_container_toggled)
+                        row.set_active(c.running)
+                        row.handler_unblock_by_func(self._on_container_toggled)
+
+        run_in_thread(work, on_done=done, on_error=lambda e: log.debug("docker refresh: %s", e), name="docker-list")
+
+    def _on_container_toggled(self, row: Adw.SwitchRow, _pspec, name: str) -> None:
+        start = row.get_active()
+        row.set_sensitive(False)
+        func = self.ctx.containers.start if start else self.ctx.containers.stop
+
+        def done(_r) -> None:
+            row.set_sensitive(True)
+            self.ctx.toast(f"{name} {'started' if start else 'stopped'}")
+            self._refresh_containers()
+
+        def failed(exc: BaseException) -> None:
+            row.set_sensitive(True)
+            self.ctx.toast(f"{name}: {exc}")
+            self._refresh_containers()
+
+        run_in_thread(func, name, on_done=done, on_error=failed, name="docker-toggle")
+
+    def _remove_container(self, name: str) -> None:
+        check = Gtk.CheckButton(label="Also delete its databases and data directory", active=False)
+
+        def go() -> None:
+            run_in_thread(self.ctx.containers.remove, name, delete_data=check.get_active(),
+                          on_done=lambda _r: (self.ctx.toast(f"{name} removed"), self.ctx.emit(CONTAINERS_CHANGED), self.ctx.emit(SERVERS_CHANGED)),
+                          on_error=lambda e: self.ctx.toast(f"Remove failed: {e}"), name="docker-remove")
+
+        confirm(self, f"Remove the container {name}?", "The container and its server entry go away. Its data directory stays unless you tick the box.", "Remove", go, extra=check)
+
     # -- mounts -------------------------------------------------------------
     def _refresh_mounts(self) -> None:
         for row in self._mount_rows:
             self.mounts_group.remove(row)
         self._mount_rows.clear()
-        mounts = self.ctx.mounter.mounts()
+        mounts = self.ctx.mounter.mounts() + self.ctx.docker_mounter.mounts()
         if not mounts:
             row = Adw.ActionRow(use_markup=False, title="Nothing attached", subtitle="Attach a VHD on the Images and Clones page to restore from it.")
             self.mounts_group.add(row)
@@ -331,7 +423,10 @@ class OverviewPage(Gtk.ScrolledWindow):
             return
         for m in mounts:
             dbs = ", ".join(d.name for d in m.databases) or "no databases yet"
-            letters = ", ".join(f"{x}:" for x in m.drive_letters) or m.target_dev
+            if m.backend == "docker":
+                letters = f"in {m.container} at " + (", ".join(m.drive_letters) or "?")
+            else:
+                letters = ", ".join(f"{x}:" for x in m.drive_letters) or m.target_dev
             row = Adw.ActionRow(use_markup=False, title=m.label, subtitle=f"{letters} · {'direct' if m.is_direct else 'clone'} · {dbs}")
             row.add_prefix(Gtk.Image.new_from_icon_name("drive-harddisk-symbolic"))
             self.mounts_group.add(row)
